@@ -1,12 +1,16 @@
 import http from "node:http";
 import { randomUUID, timingSafeEqual } from "node:crypto";
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
+import path from "node:path";
 import { loadConfig, resolveWorkingDirectory } from "./config.mjs";
 import { WorkQueue } from "./queue.mjs";
 import { httpError, runCodex } from "./codex.mjs";
+import { TraceStore } from "./trace-store.mjs";
 
 const config = loadConfig();
 const queue = new WorkQueue(config.concurrency);
+const traces = new TraceStore({ retentionMs: config.logRetentionMs, maxEntries: config.logMaxEntries });
+const dashboardHtml = await readFile(new URL("../public/dashboard.html", import.meta.url), "utf8");
 
 const server = http.createServer(async (request, response) => {
   const requestId = randomUUID();
@@ -14,10 +18,19 @@ const server = http.createServer(async (request, response) => {
   response.setHeader("x-request-id", requestId);
 
   try {
+    if (request.method === "GET" && request.url === "/dashboard") {
+      response.setHeader("content-type", "text/html; charset=utf-8");
+      response.setHeader("cache-control", "no-store");
+      response.statusCode = 200;
+      return response.end(dashboardHtml);
+    }
     if (request.method === "GET" && request.url === "/health") {
       return json(response, 200, { status: "ok", queue: queue.stats });
     }
     authenticate(request, config.token);
+    if (request.method === "GET" && request.url === "/v1/logs") {
+      return json(response, 200, { data: traces.list(), summary: traces.summary(queue.stats) });
+    }
     if (request.method !== "POST" || request.url !== "/v1/responses") {
       throw httpError(404, "Not found");
     }
@@ -36,16 +49,32 @@ const server = http.createServer(async (request, response) => {
     const directoryStat = await stat(workingDirectory).catch(() => null);
     if (!directoryStat?.isDirectory()) throw httpError(400, "working_directory does not exist");
 
+    const trace = traces.create({
+      id: requestId,
+      mode: body.mode || "read-only",
+      workspace: path.basename(workingDirectory),
+      input_chars: prompt.length,
+    });
     const queuedAt = Date.now();
     let startedAt;
-    const result = await queue.add(() => {
-      startedAt = Date.now();
-      return runCodex({
-        prompt,
-        workingDirectory,
-        mode: body.mode || "read-only",
-      }, config);
-    });
+    let result;
+    try {
+      result = await queue.add(() => {
+        startedAt = Date.now();
+        trace.queue_wait_ms = startedAt - queuedAt;
+        traces.markRunning(trace);
+        return runCodex({
+          prompt,
+          workingDirectory,
+          mode: body.mode || "read-only",
+        }, config);
+      });
+      traces.markCompleted(trace, result.outputText.length);
+    } catch (error) {
+      const status = Number.isInteger(error.status) ? error.status : 500;
+      traces.markFailed(trace, status, error.name || "Error");
+      throw error;
+    }
     const finishedAt = Date.now();
 
     return json(response, 200, {
@@ -74,6 +103,7 @@ server.listen(config.port, config.host, () => {
   console.log(`Codex local gateway listening on http://${config.host}:${config.port}`);
   console.log(`Allowed roots: ${config.allowedRoots.join(", ")}`);
   console.log(`Writes: ${config.allowWrites ? "enabled" : "disabled"}; concurrency: ${config.concurrency}`);
+  console.log(`Trace retention: ${config.logRetentionMs}ms; max entries: ${config.logMaxEntries}`);
 });
 
 function authenticate(request, expectedToken) {

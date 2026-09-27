@@ -23,6 +23,8 @@ export function loadConfig(env = process.env, cwd = process.cwd()) {
     timeoutMs: integer(env.CODEX_TIMEOUT_MS, 300_000, 1_000, 3_600_000),
     maxPromptChars: integer(env.CODEX_MAX_PROMPT_CHARS, 50_000, 1, 500_000),
     concurrency: integer(env.CODEX_CONCURRENCY, 1, 1, 4),
+    logRetentionMs: integer(env.CODEX_LOG_RETENTION_MS, 86_400_000, 60_000, 604_800_000),
+    logMaxEntries: integer(env.CODEX_LOG_MAX_ENTRIES, 1_000, 10, 10_000),
     allowWrites: env.CODEX_ALLOW_WRITES === "true",
     model: env.CODEX_MODEL?.trim() || null,
   };
