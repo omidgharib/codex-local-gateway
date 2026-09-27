@@ -1,0 +1,14 @@
+{
+  "name": "codex-local-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A localhost-only HTTP gateway for an authenticated Codex CLI session.",
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
