@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Codex Gateway Dashboard</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, Vazirmatn, system-ui, sans-serif; background: #0b1020; color: #e7ecf5; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: radial-gradient(circle at top right, #172554, #0b1020 42%); }
+    main { width: min(1180px, calc(100% - 32px)); margin: 32px auto; }
+    header { display: flex; gap: 20px; justify-content: space-between; align-items: end; flex-wrap: wrap; }
+    h1 { margin: 0 0 6px; font-size: clamp(24px, 4vw, 38px); }
+    .muted { color: #95a3bd; }
+    .auth { display: flex; gap: 8px; direction: ltr; }
+    input, select, button { border: 1px solid #334155; border-radius: 10px; padding: 10px 12px; background: #11182b; color: inherit; }
+    input { min-width: 260px; }
+    button { cursor: pointer; background: #2563eb; border-color: #3b82f6; font-weight: 700; }
+    button.secondary { background: #182235; }
+    .cards { display: grid; grid-template-columns: repeat(5, minmax(120px, 1fr)); gap: 12px; margin: 24px 0; }
+    .card, .panel { background: rgba(17, 24, 43, .88); border: 1px solid #24314a; border-radius: 16px; box-shadow: 0 18px 60px rgba(0,0,0,.2); }
+    .card { padding: 16px; }
+    .card b { display: block; font-size: 26px; margin-top: 8px; }
+    .panel { overflow: hidden; }
+    .toolbar { display: flex; gap: 10px; padding: 14px; align-items: center; flex-wrap: wrap; border-bottom: 1px solid #24314a; }
+    .toolbar input { min-width: 180px; flex: 1; }
+    table { width: 100%; border-collapse: collapse; direction: ltr; text-align: left; }
+    th, td { padding: 12px 14px; border-bottom: 1px solid #202c43; white-space: nowrap; }
+    th { color: #9eacc4; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+    tbody tr:hover { background: #151f34; }
+    .status { border-radius: 999px; padding: 4px 9px; font-size: 12px; font-weight: 700; }
+    .completed { background: #064e3b; color: #6ee7b7; }
+    .failed { background: #581c1c; color: #fca5a5; }
+    .running { background: #1e3a8a; color: #93c5fd; }
+    .queued { background: #4a2c0a; color: #fcd34d; }
+    .empty { text-align: center; color: #95a3bd; padding: 48px; }
+    #notice { min-height: 22px; margin: 12px 0; color: #fca5a5; }
+    @media (max-width: 820px) { .cards { grid-template-columns: repeat(2, 1fr); } .panel { overflow-x: auto; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>داشبورد Codex Gateway</h1>
+        <div class="muted">Trace درخواست‌ها بدون ذخیره prompt، پاسخ یا token</div>
+      </div>
+      <form class="auth" id="auth-form">
+        <input id="token" type="password" autocomplete="off" placeholder="LOCAL_CODEX_GATEWAY_TOKEN" aria-label="Gateway token">
+        <button type="submit">اتصال</button>
+      </form>
+    </header>
+    <div id="notice"></div>
+    <section class="cards">
+      <div class="card"><span class="muted">نگهداری‌شده</span><b id="total">—</b></div>
+      <div class="card"><span class="muted">موفق</span><b id="completed">—</b></div>
+      <div class="card"><span class="muted">ناموفق</span><b id="failed">—</b></div>
+      <div class="card"><span class="muted">در حال اجرا</span><b id="running">—</b></div>
+      <div class="card"><span class="muted">در صف</span><b id="queued">—</b></div>
+    </section>
+    <section class="panel">
+      <div class="toolbar">
+        <input id="search" placeholder="جستجو با request id یا workspace">
+        <select id="status" aria-label="Status filter">
+          <option value="">همه وضعیت‌ها</option>
+          <option value="queued">Queued</option>
+          <option value="running">Running</option>
+          <option value="completed">Completed</option>
+          <option value="failed">Failed</option>
+        </select>
+        <button class="secondary" id="refresh" type="button">به‌روزرسانی</button>
+        <span class="muted" id="policy"></span>
+      </div>
+      <table>
+        <thead><tr><th>Queued at</th><th>Request ID</th><th>Status</th><th>Mode</th><th>Workspace</th><th>Wait</th><th>Execution</th><th>Output</th><th>Error</th></tr></thead>
+        <tbody id="rows"><tr><td class="empty" colspan="9">برای مشاهده traceها token را وارد کنید.</td></tr></tbody>
+      </table>
+    </section>
+  </main>
+  <script>
+    const state = { token: sessionStorage.getItem("gateway-token") || "", traces: [] };
+    const $ = (id) => document.getElementById(id);
+    $("token").value = state.token;
+
+    $("auth-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      state.token = $("token").value.trim();
+      sessionStorage.setItem("gateway-token", state.token);
+      refresh();
+    });
+    $("refresh").addEventListener("click", refresh);
+    $("search").addEventListener("input", renderRows);
+    $("status").addEventListener("change", renderRows);
+
+    async function refresh() {
+      if (!state.token) return showError("Token محلی را وارد کنید.");
+      try {
+        const response = await fetch("/v1/logs", { headers: { authorization: `Bearer ${state.token}` } });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error?.message || `HTTP ${response.status}`);
+        state.traces = body.data;
+        $("total").textContent = body.summary.total_retained;
+        $("completed").textContent = body.summary.completed;
+        $("failed").textContent = body.summary.failed;
+        $("running").textContent = body.summary.running;
+        $("queued").textContent = body.summary.queue.queued;
+        $("policy").textContent = `Retention: ${formatDuration(body.summary.retention_ms)} · Max: ${body.summary.max_entries}`;
+        showError("");
+        renderRows();
+      } catch (error) { showError(error.message); }
+    }
+
+    function renderRows() {
+      const query = $("search").value.toLowerCase();
+      const status = $("status").value;
+      const filtered = state.traces.filter((trace) =>
+        (!status || trace.status === status) &&
+        (!query || `${trace.id} ${trace.workspace || ""}`.toLowerCase().includes(query))
+      );
+      $("rows").innerHTML = filtered.length ? filtered.map((trace) => `
+        <tr>
+          <td>${escapeHtml(new Date(trace.queued_at).toLocaleString())}</td>
+          <td title="${escapeHtml(trace.id)}">${escapeHtml(trace.id.slice(0, 8))}</td>
+          <td><span class="status ${trace.status}">${escapeHtml(trace.status)}</span></td>
+          <td>${escapeHtml(trace.mode)}</td>
+          <td>${escapeHtml(trace.workspace || "—")}</td>
+          <td>${formatMs(trace.queue_wait_ms)}</td>
+          <td>${formatMs(trace.execution_ms)}</td>
+          <td>${trace.output_chars ?? "—"}</td>
+          <td>${escapeHtml(trace.error_type || "—")}</td>
+        </tr>`).join("") : '<tr><td class="empty" colspan="9">رکوردی وجود ندارد.</td></tr>';
+    }
+
+    function formatMs(value) { return Number.isFinite(value) ? `${value} ms` : "—"; }
+    function formatDuration(value) { return value % 3600000 === 0 ? `${value / 3600000}h` : `${Math.round(value / 60000)}m`; }
+    function showError(message) { $("notice").textContent = message; }
+    function escapeHtml(value) { return String(value).replace(/[&<>'"]/g, (char) => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[char])); }
+
+    if (state.token) refresh();
+    setInterval(() => { if (state.token) refresh(); }, 5000);
+  </script>
+</body>
+</html>
