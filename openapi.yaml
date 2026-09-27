@@ -1,0 +1,211 @@
+openapi: 3.1.0
+info:
+  title: Codex Local Gateway
+  version: 0.1.0
+  description: >-
+    Localhost-only gateway for running a task through the user's authenticated
+    Codex CLI session. This API is not wire-compatible with the OpenAI Responses API.
+servers:
+  - url: http://127.0.0.1:4317
+    description: Local gateway
+paths:
+  /health:
+    get:
+      operationId: getGatewayHealth
+      summary: Check gateway and queue health
+      security: []
+      responses:
+        "200":
+          description: Gateway is running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /v1/responses:
+    post:
+      operationId: runCodexTask
+      summary: Run one ephemeral Codex task
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RunRequest"
+      responses:
+        "200":
+          description: Codex task completed
+          headers:
+            x-request-id:
+              description: Gateway request identifier
+              schema:
+                type: string
+                format: uuid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunResponse"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/ErrorResponse"
+        "403":
+          $ref: "#/components/responses/ErrorResponse"
+        "413":
+          $ref: "#/components/responses/ErrorResponse"
+        "502":
+          $ref: "#/components/responses/ErrorResponse"
+        "503":
+          $ref: "#/components/responses/ErrorResponse"
+        "504":
+          $ref: "#/components/responses/ErrorResponse"
+  /v1/logs:
+    get:
+      operationId: listGatewayTraces
+      summary: List retained request trace metadata and queue summary
+      description: Prompt text, response text, tokens, and absolute workspace paths are not stored.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Retained traces and aggregate summary
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, summary]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Trace"
+                  summary:
+                    $ref: "#/components/schemas/TraceSummary"
+        "401":
+          $ref: "#/components/responses/ErrorResponse"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque-local-token
+  schemas:
+    QueueStats:
+      type: object
+      additionalProperties: false
+      required: [active, queued, concurrency]
+      properties:
+        active:
+          type: integer
+          minimum: 0
+        queued:
+          type: integer
+          minimum: 0
+        concurrency:
+          type: integer
+          minimum: 1
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required: [status, queue]
+      properties:
+        status:
+          type: string
+          const: ok
+        queue:
+          $ref: "#/components/schemas/QueueStats"
+    RunRequest:
+      type: object
+      additionalProperties: false
+      required: [input]
+      properties:
+        input:
+          type: string
+          minLength: 1
+          description: Self-contained task for Codex
+        working_directory:
+          type: string
+          description: Absolute path inside a server-configured allowed root
+        mode:
+          type: string
+          enum: [read-only, workspace-write]
+          default: read-only
+        include_events:
+          type: boolean
+          default: false
+    RunResponse:
+      type: object
+      additionalProperties: false
+      required: [id, object, created_at, output_text, queue_wait_ms, execution_ms]
+      properties:
+        id:
+          type: string
+          format: uuid
+        object:
+          type: string
+          const: codex.local_response
+        created_at:
+          type: integer
+        output_text:
+          type: string
+        queue_wait_ms:
+          type: integer
+          minimum: 0
+        execution_ms:
+          type: integer
+          minimum: 0
+        events:
+          type: array
+          items: {}
+    Trace:
+      type: object
+      required: [id, status, mode, workspace, input_chars, queued_at]
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [queued, running, completed, failed] }
+        mode: { type: string, enum: [read-only, workspace-write] }
+        workspace: { type: string }
+        input_chars: { type: integer, minimum: 0 }
+        output_chars: { type: integer, minimum: 0 }
+        queued_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+        queue_wait_ms: { type: integer, minimum: 0 }
+        execution_ms: { type: integer, minimum: 0 }
+        http_status: { type: integer }
+        error_type: { type: string }
+    TraceSummary:
+      type: object
+      required: [total_retained, completed, failed, running, queue, retention_ms, max_entries]
+      properties:
+        total_retained: { type: integer, minimum: 0 }
+        completed: { type: integer, minimum: 0 }
+        failed: { type: integer, minimum: 0 }
+        running: { type: integer, minimum: 0 }
+        queue: { $ref: "#/components/schemas/QueueStats" }
+        retention_ms: { type: integer, minimum: 60000 }
+        max_entries: { type: integer, minimum: 10 }
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [message, type, request_id]
+          properties:
+            message:
+              type: string
+            type:
+              type: string
+            details: {}
+            request_id:
+              type: string
+              format: uuid
+  responses:
+    ErrorResponse:
+      description: Request failed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
