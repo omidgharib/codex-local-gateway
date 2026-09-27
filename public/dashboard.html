@@ -5,15 +5,22 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Codex Gateway Dashboard</title>
   <style>
-    :root { color-scheme: dark; font-family: Inter, Vazirmatn, system-ui, sans-serif; background: #0b1020; color: #e7ecf5; }
+    @font-face {
+      font-family: "Vazirmatn";
+      src: url("/assets/Vazirmatn-Variable.woff2") format("woff2-variations");
+      font-style: normal;
+      font-weight: 100 900;
+      font-display: swap;
+    }
+    :root { color-scheme: dark; font-family: "Vazirmatn", Tahoma, "Segoe UI", sans-serif; font-synthesis: none; background: #0b1020; color: #e7ecf5; }
     * { box-sizing: border-box; }
     body { margin: 0; min-height: 100vh; background: radial-gradient(circle at top right, #172554, #0b1020 42%); }
     main { width: min(1180px, calc(100% - 32px)); margin: 32px auto; }
     header { display: flex; gap: 20px; justify-content: space-between; align-items: end; flex-wrap: wrap; }
-    h1 { margin: 0 0 6px; font-size: clamp(24px, 4vw, 38px); }
+    h1 { margin: 0 0 6px; font-size: clamp(24px, 4vw, 38px); font-weight: 800; letter-spacing: -.025em; }
     .muted { color: #95a3bd; }
     .auth { display: flex; gap: 8px; direction: ltr; }
-    input, select, button { border: 1px solid #334155; border-radius: 10px; padding: 10px 12px; background: #11182b; color: inherit; }
+    input, select, button { font: inherit; border: 1px solid #334155; border-radius: 10px; padding: 10px 12px; background: #11182b; color: inherit; }
     input { min-width: 260px; }
     button { cursor: pointer; background: #2563eb; border-color: #3b82f6; font-weight: 700; }
     button.secondary { background: #182235; }
