@@ -6,6 +6,8 @@
 
 داشبورد trace پس از اجرای سرویس در آدرس `http://127.0.0.1:4317/dashboard` در دسترس است. برای مشاهده داده‌ها، token محلی gateway را داخل داشبورد وارد کنید.
 
+فونت فارسی داشبورد [Vazirmatn](https://github.com/rastikerdar/vazirmatn) است که به‌صورت محلی سرو می‌شود و تحت مجوز SIL Open Font License 1.1 در `public/fonts/OFL.txt` قرار دارد.
+
 ## پیش‌نیازها
 
 - Node.js 20 یا جدیدتر
