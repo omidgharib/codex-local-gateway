@@ -11,6 +11,7 @@ const config = loadConfig();
 const queue = new WorkQueue(config.concurrency);
 const traces = new TraceStore({ retentionMs: config.logRetentionMs, maxEntries: config.logMaxEntries });
 const dashboardHtml = await readFile(new URL("../public/dashboard.html", import.meta.url), "utf8");
+const dashboardFont = await readFile(new URL("../public/fonts/Vazirmatn-Variable.woff2", import.meta.url));
 
 const server = http.createServer(async (request, response) => {
   const requestId = randomUUID();
@@ -23,6 +24,12 @@ const server = http.createServer(async (request, response) => {
       response.setHeader("cache-control", "no-store");
       response.statusCode = 200;
       return response.end(dashboardHtml);
+    }
+    if (request.method === "GET" && request.url === "/assets/Vazirmatn-Variable.woff2") {
+      response.setHeader("content-type", "font/woff2");
+      response.setHeader("cache-control", "public, max-age=31536000, immutable");
+      response.statusCode = 200;
+      return response.end(dashboardFont);
     }
     if (request.method === "GET" && request.url === "/health") {
       return json(response, 200, { status: "ok", queue: queue.stats });
