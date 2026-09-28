@@ -64,7 +64,7 @@ paths:
     get:
       operationId: listGatewayTraces
       summary: List retained request trace metadata and queue summary
-      description: Prompt text, response text, tokens, and absolute workspace paths are not stored.
+      description: Full content is excluded from this list; use the authenticated per-trace endpoint when capture is enabled.
       security:
         - bearerAuth: []
       responses:
@@ -83,6 +83,33 @@ paths:
                   summary:
                     $ref: "#/components/schemas/TraceSummary"
         "401":
+          $ref: "#/components/responses/ErrorResponse"
+  /v1/logs/{requestId}:
+    get:
+      operationId: getGatewayTrace
+      summary: Get one retained trace with optional captured content
+      description: Full request, response, events, and error details are present only when CODEX_TRACE_CONTENT=true.
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: requestId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Retained trace detail
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/TraceDetail"
+        "401":
+          $ref: "#/components/responses/ErrorResponse"
+        "404":
           $ref: "#/components/responses/ErrorResponse"
 components:
   securitySchemes:
@@ -175,9 +202,21 @@ components:
         execution_ms: { type: integer, minimum: 0 }
         http_status: { type: integer }
         error_type: { type: string }
+        details_available: { type: boolean }
+    TraceDetail:
+      allOf:
+        - $ref: "#/components/schemas/Trace"
+        - type: object
+          properties:
+            detail:
+              type: object
+              properties:
+                request: { type: object, additionalProperties: true }
+                response: { type: object, additionalProperties: true }
+                error: { type: object, additionalProperties: true }
     TraceSummary:
       type: object
-      required: [total_retained, completed, failed, running, queue, retention_ms, max_entries]
+      required: [total_retained, completed, failed, running, queue, retention_ms, max_entries, content_capture_enabled]
       properties:
         total_retained: { type: integer, minimum: 0 }
         completed: { type: integer, minimum: 0 }
@@ -186,6 +225,7 @@ components:
         queue: { $ref: "#/components/schemas/QueueStats" }
         retention_ms: { type: integer, minimum: 60000 }
         max_entries: { type: integer, minimum: 10 }
+        content_capture_enabled: { type: boolean }
     ErrorEnvelope:
       type: object
       required: [error]

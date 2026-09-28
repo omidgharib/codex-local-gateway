@@ -25,7 +25,7 @@ The bearer token is supplied out-of-band by the human operator. Never print it, 
 6. Read the final answer from `output_text`.
 7. On a retryable error, retry at most twice with exponential backoff. Never retry authentication, validation, or policy errors without changing the request.
 
-For diagnostics, an authenticated agent may call `GET /v1/logs`. Trace records contain timing, status, mode, workspace basename, and character counts only. Prompt text, output text, bearer tokens, and full workspace paths are deliberately excluded.
+For diagnostics, an authenticated agent may call `GET /v1/logs`, then `GET /v1/logs/{requestId}` for one trace. Full content is returned only when the operator explicitly starts the gateway with `CODEX_TRACE_CONTENT=true`. The bearer token is never retained.
 
 ## Health check
 

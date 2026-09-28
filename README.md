@@ -94,7 +94,11 @@ Body:
 
 ### `GET /v1/logs`
 
-با همان Bearer token، metadata محدود traceها و خلاصه صف را برمی‌گرداند. متن prompt، پاسخ و token ذخیره نمی‌شوند. نگهداری پیش‌فرض ۲۴ ساعت و حداکثر ۱۰۰۰ رکورد است و با `CODEX_LOG_RETENTION_MS` و `CODEX_LOG_MAX_ENTRIES` قابل تنظیم است.
+با همان Bearer token، metadata محدود traceها و خلاصه صف را برمی‌گرداند. نگهداری پیش‌فرض ۲۴ ساعت و حداکثر ۱۰۰۰ رکورد است و با `CODEX_LOG_RETENTION_MS` و `CODEX_LOG_MAX_ENTRIES` قابل تنظیم است.
+
+### `GET /v1/logs/:requestId`
+
+جزئیات یک trace را برمی‌گرداند. ذخیره prompt، پاسخ، eventها، stderr و مسیر کامل به‌صورت پیش‌فرض خاموش است. برای فعال‌سازی، سرویس را با `CODEX_TRACE_CONTENT=true` اجرا کنید. محتوا فقط در حافظه نگهداری می‌شود، با همان retention حذف می‌شود و پس از restart از بین می‌رود. Bearer token هیچ‌وقت داخل trace ذخیره نمی‌شود.
 
 ## تست
 
@@ -109,3 +113,4 @@ node --test
 - هر فراخوانی یک اجرای ephemeral جدید است و حافظه مکالمه ندارد.
 - محدودیت مصرف و دسترسی مدل تابع حساب Codex شماست.
 - این gateway برای استفاده شخصی و کم‌هم‌زمانی طراحی شده است.
+- فعال‌سازی `CODEX_TRACE_CONTENT` می‌تواند secretهای موجود در prompt یا خروجی را موقتاً در حافظه نگه دارد؛ retention را کوتاه و دسترسی به دستگاه را محدود نگه دارید.
