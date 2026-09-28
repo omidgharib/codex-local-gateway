@@ -36,7 +36,7 @@ paths:
               $ref: "#/components/schemas/RunRequest"
       responses:
         "200":
-          description: Codex task completed
+          description: Codex task completed, or an SSE event stream when stream=true
           headers:
             x-request-id:
               description: Gateway request identifier
@@ -47,6 +47,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RunResponse"
+            text/event-stream:
+              schema:
+                type: string
+                description: Responses-style events terminated by data [DONE]
         "400":
           $ref: "#/components/responses/ErrorResponse"
         "401":
@@ -61,6 +65,47 @@ paths:
           $ref: "#/components/responses/ErrorResponse"
         "504":
           $ref: "#/components/responses/ErrorResponse"
+  /v1/responses/{requestId}/cancel:
+    post:
+      operationId: cancelCodexTask
+      summary: Cancel a queued or running request
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: requestId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Cancellation was requested
+        "401":
+          $ref: "#/components/responses/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+  /v1/chat/completions:
+    post:
+      operationId: createChatCompletion
+      summary: Run a text-only Chat Completions-compatible Codex task
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatRequest"
+      responses:
+        "200":
+          description: Chat completion or SSE chunks when stream=true
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChatResponse" }
+            text/event-stream:
+              schema: { type: string }
+        "400": { $ref: "#/components/responses/ErrorResponse" }
+        "401": { $ref: "#/components/responses/ErrorResponse" }
+        "429": { $ref: "#/components/responses/ErrorResponse" }
   /v1/logs:
     get:
       operationId: listGatewayTraces
@@ -122,7 +167,7 @@ components:
     QueueStats:
       type: object
       additionalProperties: false
-      required: [active, queued, concurrency]
+      required: [active, queued, concurrency, max_queued, accepting]
       properties:
         active:
           type: integer
@@ -133,6 +178,8 @@ components:
         concurrency:
           type: integer
           minimum: 1
+        max_queued: { type: integer, minimum: 1 }
+        accepting: { type: boolean }
     HealthResponse:
       type: object
       additionalProperties: false
@@ -154,7 +201,7 @@ components:
               minLength: 1
             - type: array
               minItems: 1
-          description: Text input or a message array whose content uses input_text items
+          description: Text input or a message array using input_text and input_image items. Images must be base64 data URLs or allowed local absolute paths.
         instructions:
           type: string
           description: Instructions prepended to the Codex task
@@ -164,7 +211,39 @@ components:
         stream:
           type: boolean
           default: false
-          description: Only false is currently supported; true returns 400.
+          description: When true, return Responses-style Server-Sent Events.
+        reasoning:
+          type: object
+          additionalProperties: false
+          properties:
+            effort:
+              type: string
+              enum: [none, minimal, low, medium, high, xhigh]
+        text:
+          type: object
+          additionalProperties: false
+          properties:
+            format:
+              oneOf:
+                - type: object
+                  required: [type]
+                  properties:
+                    type: { const: text }
+                - type: object
+                  required: [type, schema]
+                  properties:
+                    type: { const: json_schema }
+                    name: { type: string }
+                    strict: { type: boolean }
+                    schema: { type: object }
+        metadata:
+          type: object
+          maxProperties: 16
+          additionalProperties: { type: string }
+        store:
+          type: boolean
+          const: false
+          description: This ephemeral gateway only supports false.
         working_directory:
           type: string
           description: Absolute path inside a server-configured allowed root
@@ -202,6 +281,8 @@ components:
           type: "null"
         incomplete_details:
           type: "null"
+        metadata:
+          type: [object, "null"]
         usage:
           type: [object, "null"]
         queue_wait_ms:
@@ -213,6 +294,40 @@ components:
         events:
           type: array
           items: {}
+    ChatRequest:
+      type: object
+      additionalProperties: false
+      required: [messages]
+      properties:
+        model: { type: string }
+        messages:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [role, content]
+            properties:
+              role: { type: string, enum: [developer, system, user, assistant] }
+              content: { type: string }
+        stream: { type: boolean, default: false }
+        reasoning_effort: { type: string, enum: [none, minimal, low, medium, high, xhigh] }
+        response_format: { type: object }
+        metadata: { type: object, additionalProperties: { type: string }, maxProperties: 16 }
+        store: { type: boolean, const: false }
+        working_directory: { type: string }
+        mode: { type: string, enum: [read-only, workspace-write], default: read-only }
+        include_events: { type: boolean, default: false }
+    ChatResponse:
+      type: object
+      required: [id, object, created, model, choices]
+      properties:
+        id: { type: string }
+        object: { const: chat.completion }
+        created: { type: integer }
+        model: { type: string }
+        choices: { type: array }
+        usage: { type: [object, "null"] }
+        metadata: { type: [object, "null"] }
     Trace:
       type: object
       required: [id, status, mode, workspace, input_chars, queued_at]
@@ -254,6 +369,14 @@ components:
         retention_ms: { type: integer, minimum: 60000 }
         max_entries: { type: integer, minimum: 10 }
         content_capture_enabled: { type: boolean }
+        persistence_enabled: { type: boolean }
+        success_rate: { type: [number, "null"], minimum: 0, maximum: 1 }
+        latency_ms:
+          type: object
+          properties:
+            average: { type: [integer, "null"] }
+            p50: { type: [integer, "null"] }
+            p95: { type: [integer, "null"] }
     ErrorEnvelope:
       type: object
       required: [error]

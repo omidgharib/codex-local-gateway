@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { TraceStore } from "../src/trace-store.mjs";
 
 test("tracks a successful request without prompt or response content", () => {
@@ -24,6 +27,26 @@ test("tracks a successful request without prompt or response content", () => {
   });
   assert.equal("input" in store.list()[0], false);
   assert.equal("output_text" in store.list()[0], false);
+});
+
+test("persists public trace metadata and restores it", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "gateway-traces-"));
+  const persistPath = path.join(directory, "traces.json");
+  try {
+    const options = { retentionMs: 60_000, maxEntries: 10, captureContent: true, persistPath };
+    const first = new TraceStore(options);
+    const trace = first.create({ id: "persisted", mode: "read-only", workspace: "test", input_chars: 3 }, { input: "secret" });
+    first.markRunning(trace);
+    first.markCompleted(trace, { outputText: "secret output", events: [], stderr: "" });
+    const onDisk = readFileSync(persistPath, "utf8");
+    assert.doesNotMatch(onDisk, /secret/);
+    const restored = new TraceStore(options);
+    assert.equal(restored.get("persisted").status, "completed");
+    assert.equal(restored.get("persisted").detail, undefined);
+    assert.equal(restored.summary({ active: 0, queued: 0, concurrency: 1 }).success_rate, 1);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("prunes expired entries and enforces the maximum", () => {
