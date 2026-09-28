@@ -6,10 +6,17 @@ import { loadConfig, resolveWorkingDirectory } from "./config.mjs";
 import { WorkQueue } from "./queue.mjs";
 import { httpError, runCodex } from "./codex.mjs";
 import { TraceStore } from "./trace-store.mjs";
+import { loadLocalEnv } from "./local-env.mjs";
+import { normalizeResponseRequest, responseEnvelope } from "./responses-compat.mjs";
 
+loadLocalEnv();
 const config = loadConfig();
 const queue = new WorkQueue(config.concurrency);
-const traces = new TraceStore({ retentionMs: config.logRetentionMs, maxEntries: config.logMaxEntries });
+const traces = new TraceStore({
+  retentionMs: config.logRetentionMs,
+  maxEntries: config.logMaxEntries,
+  captureContent: config.traceContent,
+});
 const dashboardHtml = await readFile(new URL("../public/dashboard.html", import.meta.url), "utf8");
 const dashboardFont = await readFile(new URL("../public/fonts/Vazirmatn-Variable.woff2", import.meta.url));
 
@@ -38,13 +45,19 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "GET" && request.url === "/v1/logs") {
       return json(response, 200, { data: traces.list(), summary: traces.summary(queue.stats) });
     }
+    const traceMatch = request.method === "GET" && request.url?.match(/^\/v1\/logs\/([0-9a-f-]+)$/i);
+    if (traceMatch) {
+      const trace = traces.get(traceMatch[1]);
+      if (!trace) throw httpError(404, "Trace not found or expired");
+      return json(response, 200, { data: trace });
+    }
     if (request.method !== "POST" || request.url !== "/v1/responses") {
       throw httpError(404, "Not found");
     }
 
     const body = await readJson(request, 1_000_000);
-    const prompt = typeof body.input === "string" ? body.input.trim() : "";
-    if (!prompt) throw httpError(400, "input must be a non-empty string");
+    const normalized = normalizeResponseRequest(body, config.model);
+    const prompt = normalized.prompt;
     if (prompt.length > config.maxPromptChars) {
       throw httpError(413, `input exceeds ${config.maxPromptChars} characters`);
     }
@@ -61,6 +74,13 @@ const server = http.createServer(async (request, response) => {
       mode: body.mode || "read-only",
       workspace: path.basename(workingDirectory),
       input_chars: prompt.length,
+    }, {
+      input: body.input,
+      instructions: normalized.instructions,
+      model: normalized.model,
+      working_directory: workingDirectory,
+      mode: body.mode || "read-only",
+      include_events: body.include_events === true,
     });
     const queuedAt = Date.now();
     let startedAt;
@@ -74,25 +94,26 @@ const server = http.createServer(async (request, response) => {
           prompt,
           workingDirectory,
           mode: body.mode || "read-only",
+          model: normalized.model,
         }, config);
       });
-      traces.markCompleted(trace, result.outputText.length);
+      traces.markCompleted(trace, result);
     } catch (error) {
       const status = Number.isInteger(error.status) ? error.status : 500;
-      traces.markFailed(trace, status, error.name || "Error");
+      traces.markFailed(trace, status, error);
       throw error;
     }
     const finishedAt = Date.now();
 
-    return json(response, 200, {
+    return json(response, 200, responseEnvelope({
       id: requestId,
-      object: "codex.local_response",
-      created_at: Math.floor(Date.now() / 1000),
-      output_text: result.outputText,
-      queue_wait_ms: startedAt - queuedAt,
-      execution_ms: finishedAt - startedAt,
-      events: body.include_events === true ? result.events : undefined,
-    });
+      createdAt: finishedAt,
+      model: normalized.model,
+      outputText: result.outputText,
+      events: result.events,
+      queueWaitMs: startedAt - queuedAt,
+      executionMs: finishedAt - startedAt,
+    }));
   } catch (error) {
     const status = Number.isInteger(error.status) ? error.status : 500;
     return json(response, status, {
@@ -111,6 +132,7 @@ server.listen(config.port, config.host, () => {
   console.log(`Allowed roots: ${config.allowedRoots.join(", ")}`);
   console.log(`Writes: ${config.allowWrites ? "enabled" : "disabled"}; concurrency: ${config.concurrency}`);
   console.log(`Trace retention: ${config.logRetentionMs}ms; max entries: ${config.logMaxEntries}`);
+  console.log(`Trace content: ${config.traceContent ? "enabled" : "disabled"}`);
 });
 
 function authenticate(request, expectedToken) {

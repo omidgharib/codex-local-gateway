@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-export async function runCodex({ prompt, workingDirectory, mode }, config) {
+export async function runCodex({ prompt, workingDirectory, mode, model }, config) {
   const tempDirectory = await mkdtemp(path.join(tmpdir(), "codex-gateway-"));
   const outputFile = path.join(tempDirectory, "last-message.txt");
   const sandbox = mode === "workspace-write" ? "workspace-write" : "read-only";
@@ -27,7 +27,7 @@ export async function runCodex({ prompt, workingDirectory, mode }, config) {
     "--output-last-message",
     outputFile,
   ];
-  if (config.model) args.push("--model", config.model);
+  if (model || config.model) args.push("--model", model || config.model);
   args.push("-");
 
   try {

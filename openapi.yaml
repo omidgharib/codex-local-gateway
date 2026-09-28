@@ -3,8 +3,9 @@ info:
   title: Codex Local Gateway
   version: 0.1.0
   description: >-
-    Localhost-only gateway for running a task through the user's authenticated
-    Codex CLI session. This API is not wire-compatible with the OpenAI Responses API.
+    Localhost-only, limited Responses API-compatible gateway for running a task
+    through the user's authenticated Codex CLI session. Only documented request
+    fields are accepted; unsupported OpenAI Responses API features return 400.
 servers:
   - url: http://127.0.0.1:4317
     description: Local gateway
@@ -24,7 +25,7 @@ paths:
   /v1/responses:
     post:
       operationId: runCodexTask
-      summary: Run one ephemeral Codex task
+      summary: Run one ephemeral Codex task with a limited Responses-compatible body
       security:
         - bearerAuth: []
       requestBody:
@@ -148,9 +149,22 @@ components:
       required: [input]
       properties:
         input:
+          oneOf:
+            - type: string
+              minLength: 1
+            - type: array
+              minItems: 1
+          description: Text input or a message array whose content uses input_text items
+        instructions:
           type: string
-          minLength: 1
-          description: Self-contained task for Codex
+          description: Instructions prepended to the Codex task
+        model:
+          type: string
+          description: Codex CLI model override for this request
+        stream:
+          type: boolean
+          default: false
+          description: Only false is currently supported; true returns 400.
         working_directory:
           type: string
           description: Absolute path inside a server-configured allowed root
@@ -164,18 +178,32 @@ components:
     RunResponse:
       type: object
       additionalProperties: false
-      required: [id, object, created_at, output_text, queue_wait_ms, execution_ms]
+      required: [id, object, created_at, status, model, output, output_text, error, incomplete_details, queue_wait_ms, execution_ms]
       properties:
         id:
           type: string
           format: uuid
         object:
           type: string
-          const: codex.local_response
+          const: response
         created_at:
           type: integer
+        status:
+          type: string
+          const: completed
+        model:
+          type: string
+        output:
+          type: array
+          description: Responses-style assistant message array
         output_text:
           type: string
+        error:
+          type: "null"
+        incomplete_details:
+          type: "null"
+        usage:
+          type: [object, "null"]
         queue_wait_ms:
           type: integer
           minimum: 0
