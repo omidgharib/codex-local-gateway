@@ -35,6 +35,9 @@
     th, td { padding: 12px 14px; border-bottom: 1px solid #202c43; white-space: nowrap; }
     th { color: #9eacc4; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
     tbody tr:hover { background: #151f34; }
+    tbody tr[data-request-id] { cursor: pointer; }
+    tbody tr[data-request-id]:focus { outline: 2px solid #60a5fa; outline-offset: -2px; }
+    tbody tr.selected { background: #1e3a5f; }
     .status { border-radius: 999px; padding: 4px 9px; font-size: 12px; font-weight: 700; }
     .completed { background: #064e3b; color: #6ee7b7; }
     .failed { background: #581c1c; color: #fca5a5; }
@@ -42,6 +45,11 @@
     .queued { background: #4a2c0a; color: #fcd34d; }
     .empty { text-align: center; color: #95a3bd; padding: 48px; }
     #notice { min-height: 22px; margin: 12px 0; color: #fca5a5; }
+    #details { width: min(900px, calc(100% - 32px)); max-height: min(760px, calc(100vh - 48px)); margin: auto; padding: 18px; color: inherit; background: #11182b; border: 1px solid #3b82f6; border-radius: 16px; box-shadow: 0 24px 90px rgba(0, 0, 0, .6); }
+    #details::backdrop { background: rgba(2, 6, 23, .76); backdrop-filter: blur(3px); }
+    .details-header { display: flex; gap: 12px; justify-content: space-between; align-items: center; flex-wrap: wrap; }
+    .details-header h2 { margin: 0; font-size: 18px; }
+    #detail-content { direction: ltr; text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 440px; overflow: auto; margin: 14px 0 0; padding: 14px; border-radius: 10px; background: #0b1020; color: #cbd5e1; }
     @media (max-width: 820px) { .cards { grid-template-columns: repeat(2, 1fr); } .panel { overflow-x: auto; } }
   </style>
 </head>
@@ -83,9 +91,16 @@
         <tbody id="rows"><tr><td class="empty" colspan="9">برای مشاهده traceها token را وارد کنید.</td></tr></tbody>
       </table>
     </section>
+    <dialog id="details">
+      <div class="details-header">
+        <h2>جزئیات درخواست</h2>
+        <button class="secondary" id="close-details" type="button">بستن</button>
+      </div>
+      <pre id="detail-content"></pre>
+    </dialog>
   </main>
   <script>
-    const state = { token: sessionStorage.getItem("gateway-token") || "", traces: [] };
+    const state = { token: sessionStorage.getItem("gateway-token") || "", traces: [], selectedId: null };
     const $ = (id) => document.getElementById(id);
     $("token").value = state.token;
 
@@ -98,6 +113,18 @@
     $("refresh").addEventListener("click", refresh);
     $("search").addEventListener("input", renderRows);
     $("status").addEventListener("change", renderRows);
+    $("rows").addEventListener("click", (event) => {
+      const row = event.target.closest("tr[data-request-id]");
+      if (row) showDetails(row.dataset.requestId);
+    });
+    $("rows").addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      const row = event.target.closest("tr[data-request-id]");
+      if (!row) return;
+      event.preventDefault();
+      showDetails(row.dataset.requestId);
+    });
+    $("close-details").addEventListener("click", hideDetails);
 
     async function refresh() {
       if (!state.token) return showError("Token محلی را وارد کنید.");
@@ -125,7 +152,7 @@
         (!query || `${trace.id} ${trace.workspace || ""}`.toLowerCase().includes(query))
       );
       $("rows").innerHTML = filtered.length ? filtered.map((trace) => `
-        <tr>
+        <tr data-request-id="${escapeHtml(trace.id)}" tabindex="0" aria-label="مشاهده جزئیات ${escapeHtml(trace.id)}" class="${trace.id === state.selectedId ? "selected" : ""}">
           <td>${escapeHtml(new Date(trace.queued_at).toLocaleString())}</td>
           <td title="${escapeHtml(trace.id)}">${escapeHtml(trace.id.slice(0, 8))}</td>
           <td><span class="status ${trace.status}">${escapeHtml(trace.status)}</span></td>
@@ -136,6 +163,30 @@
           <td>${trace.output_chars ?? "—"}</td>
           <td>${escapeHtml(trace.error_type || "—")}</td>
         </tr>`).join("") : '<tr><td class="empty" colspan="9">رکوردی وجود ندارد.</td></tr>';
+    }
+
+    async function showDetails(requestId) {
+      if (!state.token) return showError("Token محلی را وارد کنید.");
+      state.selectedId = requestId;
+      renderRows();
+      if (!$("details").open) $("details").showModal();
+      $("detail-content").textContent = "در حال دریافت جزئیات…";
+      try {
+        const response = await fetch(`/v1/logs/${encodeURIComponent(requestId)}`, { headers: { authorization: `Bearer ${state.token}` } });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error?.message || `HTTP ${response.status}`);
+        $("detail-content").textContent = JSON.stringify(body.data, null, 2);
+        showError("");
+      } catch (error) {
+        $("detail-content").textContent = "جزئیات قابل دریافت نیست.";
+        showError(error.message);
+      }
+    }
+
+    function hideDetails() {
+      state.selectedId = null;
+      $("details").close();
+      renderRows();
     }
 
     function formatMs(value) { return Number.isFinite(value) ? `${value} ms` : "—"; }

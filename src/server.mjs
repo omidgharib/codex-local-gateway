@@ -76,7 +76,12 @@ const server = http.createServer(async (request, response) => {
       throw httpError(400, "mode must be read-only or workspace-write");
     }
 
-    const workingDirectory = resolveWorkingDirectory(body.working_directory, config);
+    let workingDirectory;
+    try {
+      workingDirectory = resolveWorkingDirectory(body.working_directory, config);
+    } catch (error) {
+      throw httpError(400, error.message);
+    }
     const directoryStat = await stat(workingDirectory).catch(() => null);
     if (!directoryStat?.isDirectory()) throw httpError(400, "working_directory does not exist");
     const inputImages = await validateInputImages(normalized.inputImages, config);
