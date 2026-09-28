@@ -28,6 +28,16 @@ codex login
 
 ## راه‌اندازی در PowerShell
 
+می‌توانید تنظیمات محلی را در فایل `.env.local` قرار دهید. این فایل به Git اضافه نمی‌شود و متغیرهای محیطیِ تنظیم‌شده در PowerShell همیشه بر آن اولویت دارند:
+
+```env
+LOCAL_CODEX_GATEWAY_TOKEN=یک-توکن-تصادفی-حداقل-۳۲-کاراکتری
+CODEX_ALLOWED_ROOTS=C:\\Users\\Dotin\\Documents\\codex-local-gateway
+CODEX_MODEL=gpt-5.6-terra
+```
+
+پس از ساخت فایل، اجرای `node src/server.mjs` آن را خودکار می‌خواند.
+
 به پوشه پروژه بروید و یک token محلی بسازید:
 
 ```powershell
@@ -61,6 +71,25 @@ Invoke-RestMethod `
 ```
 
 پاسخ اصلی در فیلد `output_text` قرار دارد.
+
+### سازگاری محدود با Responses API
+
+مسیر `POST /v1/responses` بدنه‌ای شبیه Responses API می‌پذیرد. فیلدهای پشتیبانی‌شده `model`، `input` (رشته یا message array با `input_text`)، `instructions` و `stream: false` هستند. فیلدهای محلیِ قدیمی `mode`، `working_directory` و `include_events` نیز برقرارند. هر پارامتر دیگر، از جمله `temperature`، `tools`، `store` یا `stream: true` با خطای `400` و نام پارامتر برگردانده می‌شود؛ این گیت‌وی جایگزین API رسمی OpenAI نیست.
+
+```json
+{
+  "model": "gpt-5.6-terra",
+  "instructions": "Answer briefly.",
+  "input": [{
+    "role": "user",
+    "content": [{ "type": "input_text", "text": "Say hello." }]
+  }],
+  "stream": false,
+  "mode": "read-only"
+}
+```
+
+پاسخ دارای ساختار `object: "response"`، آرایهٔ `output` و فیلد کمکی `output_text` است. زمان صف و اجرا با فیلدهای اختصاصی `queue_wait_ms` و `execution_ms` بازگردانده می‌شوند.
 
 ## قرارداد HTTP
 

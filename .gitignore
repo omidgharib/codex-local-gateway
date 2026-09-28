@@ -2,3 +2,7 @@
 !.env.example
 *.log
 node_modules/
+
+
+.env.local
+.env.*
