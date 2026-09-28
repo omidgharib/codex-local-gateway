@@ -30,6 +30,10 @@ export class TraceStore {
     item.status = "completed";
     item.completed_at = new Date(this.now()).toISOString();
     item.execution_ms = elapsed(item.started_at, item.completed_at);
+    if (typeof result === "number") {
+      item.output_chars = result;
+      return;
+    }
     item.output_chars = result.outputText.length;
     if (item.detail) item.detail.response = { output_text: result.outputText, events: result.events, stderr: result.stderr };
   }
@@ -76,7 +80,7 @@ export class TraceStore {
 }
 
 function publicTrace({ detail, ...item }) {
-  return { ...item, details_available: Boolean(detail) };
+  return { ...item, ...(detail ? { details_available: true } : {}) };
 }
 
 function elapsed(start, end) {
