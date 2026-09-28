@@ -2,6 +2,7 @@
 !.env.example
 *.log
 node_modules/
+output/
 
 
 .env.local

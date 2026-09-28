@@ -1,0 +1,24 @@
+services:
+  gateway:
+    build:
+      context: .
+      args:
+        CODEX_VERSION: ${CODEX_VERSION:-latest}
+    ports:
+      - "127.0.0.1:4317:4317"
+    env_file:
+      - .env.local
+    environment:
+      HOST: 0.0.0.0
+      CODEX_BIN: codex
+      CODEX_ALLOWED_ROOTS: /workspace
+      CODEX_HOME: /home/gateway/.codex
+      CODEX_TRACE_FILE: /data/traces.json
+    volumes:
+      - ${CODEX_WORKSPACE:?Set CODEX_WORKSPACE}:/workspace
+      - ${CODEX_HOST_HOME:?Set CODEX_HOST_HOME}:/home/gateway/.codex
+      - gateway-data:/data
+    restart: unless-stopped
+
+volumes:
+  gateway-data:

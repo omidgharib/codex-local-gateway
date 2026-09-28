@@ -74,7 +74,22 @@ Invoke-RestMethod `
 
 ### سازگاری محدود با Responses API
 
-مسیر `POST /v1/responses` بدنه‌ای شبیه Responses API می‌پذیرد. فیلدهای پشتیبانی‌شده `model`، `input` (رشته یا message array با `input_text`)، `instructions` و `stream: false` هستند. فیلدهای محلیِ قدیمی `mode`، `working_directory` و `include_events` نیز برقرارند. هر پارامتر دیگر، از جمله `temperature`، `tools`، `store` یا `stream: true` با خطای `400` و نام پارامتر برگردانده می‌شود؛ این گیت‌وی جایگزین API رسمی OpenAI نیست.
+مسیر `POST /v1/responses` بدنه‌ای شبیه Responses API می‌پذیرد. فیلدهای پشتیبانی‌شده `model`، `input` (رشته یا message array با `input_text` و `input_image`)، `instructions`، `stream`، `reasoning.effort`، `text.format`، `metadata` و `store: false` هستند. تصویر می‌تواند data URL از نوع PNG/JPEG/WEBP/GIF یا مسیر absolute داخل `CODEX_ALLOWED_ROOTS` باشد؛ gateway تصویر اینترنتی دانلود نمی‌کند. `text.format` می‌تواند متن عادی یا `json_schema` باشد و مستقیماً به structured output در Codex CLI متصل می‌شود. فیلدهای محلیِ قدیمی `mode`، `working_directory` و `include_events` نیز برقرارند. پارامترهای اجرا‌نشده، از جمله `temperature`، `tools`، `previous_response_id` یا `store: true` با خطای `400` و نام پارامتر برگردانده می‌شوند؛ این گیت‌وی جایگزین API رسمی OpenAI نیست.
+
+با `stream: true` پاسخ به‌صورت SSE ارسال می‌شود. جریان با رویدادهای `response.created` و `response.in_progress` شروع، متن با `response.output_text.delta` ارسال و با `response.completed` و `[DONE]` تمام می‌شود. شناسه درخواست از header به نام `x-request-id` قابل دریافت است.
+
+برای لغو درخواست در صف یا در حال اجرا:
+
+```http
+POST /v1/responses/{requestId}/cancel
+Authorization: Bearer <LOCAL_CODEX_GATEWAY_TOKEN>
+```
+
+قطع اتصال HTTP نیز اجرای مربوط را متوقف می‌کند.
+
+### Chat Completions
+
+مسیر `POST /v1/chat/completions` برای کلاینت‌های متنی قدیمی‌تر فراهم است و حالت عادی و `stream: true` را پشتیبانی می‌کند. در این نسخه فقط پیام‌های متنی با roleهای `developer`، `system`، `user` و `assistant` پذیرفته می‌شوند. پارامترهای پشتیبانی‌شده شامل `model`، `reasoning_effort`، `response_format`، `metadata` و `store: false` هستند.
 
 ```json
 {
@@ -120,10 +135,13 @@ Body:
 - برای فعال‌کردن تغییر فایل‌ها، ابتدا `CODEX_ALLOW_WRITES=true` تنظیم کنید و در درخواست `mode: workspace-write` بفرستید.
 - پوشه کاری باید داخل یکی از مسیرهای `CODEX_ALLOWED_ROOTS` باشد.
 - درخواست‌ها به‌صورت پیش‌فرض یکی‌یکی اجرا می‌شوند تا مصرف و تداخل کنترل شود.
+- ظرفیت صف، timeout انتظار و shutdown با `CODEX_MAX_QUEUED`، `CODEX_QUEUE_TIMEOUT_MS` و `CODEX_SHUTDOWN_TIMEOUT_MS` کنترل می‌شوند.
 
 ### `GET /v1/logs`
 
 با همان Bearer token، metadata محدود traceها و خلاصه صف را برمی‌گرداند. نگهداری پیش‌فرض ۲۴ ساعت و حداکثر ۱۰۰۰ رکورد است و با `CODEX_LOG_RETENTION_MS` و `CODEX_LOG_MAX_ENTRIES` قابل تنظیم است.
+
+برای نگهداری metadata پس از restart، مسیر `CODEX_TRACE_FILE` را تعیین کنید. prompt، پاسخ، event و stderr هرگز در این فایل نوشته نمی‌شوند. خلاصه trace شامل نرخ موفقیت و latencyهای average، p50 و p95 است.
 
 ### `GET /v1/logs/:requestId`
 
@@ -135,10 +153,38 @@ Body:
 node --test
 ```
 
+## اجرای Docker
+
+فایل‌های `Dockerfile` و `docker-compose.yml` آماده‌اند. ورود Codex و workspace به container mount می‌شوند و پورت فقط روی localhost منتشر می‌شود:
+
+```powershell
+$env:CODEX_WORKSPACE = (Get-Location).Path
+$env:CODEX_HOST_HOME = "$env:USERPROFILE\.codex"
+docker compose up --build -d
+```
+
+نسخه Codex CLI را برای محیط‌های پایدار با `CODEX_VERSION` pin کنید. فایل `.env.local` وارد image نمی‌شود، ولی Compose آن را هنگام اجرا می‌خواند.
+
+## اجرای خودکار در ویندوز
+
+برای ساخت startup task مخصوص کاربر فعلی:
+
+```powershell
+.\scripts\install-windows-startup.ps1
+```
+
+این task هنگام ورود کاربر gateway را در پنجره مخفی اجرا می‌کند. برای حذف آن:
+
+```powershell
+.\scripts\uninstall-windows-startup.ps1
+```
+
+اسکریپت نصب فقط با اجرای صریح اپراتور سیستم را تغییر می‌دهد.
+
 ## محدودیت‌های آگاهانه
 
 - سرویس فقط روی `127.0.0.1` گوش می‌دهد؛ آن را مستقیماً روی اینترنت منتشر نکنید.
-- نسخه اول پاسخ را پس از پایان کار برمی‌گرداند و streaming HTTP ندارد.
+- متن میانی وابسته به eventهای Codex CLI است؛ بعضی نسخه‌ها ممکن است متن را در یک delta نهایی بفرستند.
 - هر فراخوانی یک اجرای ephemeral جدید است و حافظه مکالمه ندارد.
 - محدودیت مصرف و دسترسی مدل تابع حساب Codex شماست.
 - این gateway برای استفاده شخصی و کم‌هم‌زمانی طراحی شده است.
