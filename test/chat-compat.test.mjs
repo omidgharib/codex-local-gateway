@@ -25,7 +25,29 @@ test("creates chat completion and streaming chunk envelopes", () => {
   assert.equal(chunk.object, "chat.completion.chunk");
 });
 
-test("rejects unsupported Chat Completions fields and non-text content", () => {
+test("rejects unsupported Chat Completions fields and malformed tool messages", () => {
   assert.throws(() => normalizeChatRequest({ messages: [{ role: "user", content: "Hi" }], temperature: 1 }, null), /temperature/);
-  assert.throws(() => normalizeChatRequest({ messages: [{ role: "tool", content: "Hi" }] }, null), /role/);
+  assert.throws(() => normalizeChatRequest({ messages: [{ role: "tool", content: "Hi" }] }, null), /tool_call_id/);
+});
+
+test("normalizes Chat Completions tools and tool result messages", () => {
+  const request = normalizeChatRequest({
+    messages: [
+      { role: "user", content: "Weather?" },
+      { role: "assistant", content: null, tool_calls: [{ id: "call_1", type: "function", function: { name: "get_weather", arguments: "{\"city\":\"Tehran\"}" } }] },
+      { role: "tool", tool_call_id: "call_1", content: "25 C" },
+    ],
+    tools: [{ type: "function", function: { name: "get_weather", parameters: { type: "object" } } }],
+  }, null);
+  assert.equal(request.tools[0].name, "get_weather");
+  assert.match(request.prompt, /25 C/);
+
+  const completion = chatEnvelope({
+    id: "a-b",
+    createdAt: 1000,
+    outputText: "",
+    output: [{ type: "function_call", call_id: "call_1", name: "get_weather", arguments: "{}" }],
+  });
+  assert.equal(completion.choices[0].finish_reason, "tool_calls");
+  assert.equal(completion.choices[0].message.tool_calls[0].function.name, "get_weather");
 });

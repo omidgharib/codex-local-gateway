@@ -33,12 +33,81 @@ test("serves Responses and Chat Completions with streaming and cancellation", { 
     assert.equal(normal.status, 200);
     assert.equal((await normal.json()).output_text, "RESPONSE_OK");
 
+    const tools = [{
+      type: "function",
+      name: "get_weather",
+      strict: true,
+      parameters: { type: "object", properties: { city: { type: "string" } }, required: ["city"], additionalProperties: false },
+    }];
+    const toolResponse = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ input: "Weather in Tehran?", tools, tool_choice: "required", include_events: true }),
+    });
+    assert.equal(toolResponse.status, 200);
+    const toolBody = await toolResponse.json();
+    assert.equal(toolBody.output[0].type, "function_call");
+    assert.equal(toolBody.output[0].name, "get_weather");
+    assert.ok(Array.isArray(toolBody.events));
+
+    const finalResponse = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        tools,
+        input: [
+          { role: "user", content: "Weather in Tehran?" },
+          toolBody.output[0],
+          { type: "function_call_output", call_id: toolBody.output[0].call_id, output: "{\"temperature_c\":25}" },
+        ],
+      }),
+    });
+    assert.equal(finalResponse.status, 200);
+    assert.equal((await finalResponse.json()).output_text, "The weather is 25 C.");
+
+    const toolStream = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ input: "Weather?", tools, tool_choice: "required", stream: true }),
+    });
+    const toolStreamText = await toolStream.text();
+    assert.match(toolStreamText, /response\.function_call_arguments\.done/);
+    assert.match(toolStreamText, /get_weather/);
+
     const chat = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, { method: "POST", headers, body: JSON.stringify({ messages: [{ role: "user", content: "CHAT_TEST" }], stream: true }) });
     const chatText = await chat.text();
     assert.match(chat.headers.get("content-type"), /text\/event-stream/);
     assert.match(chatText, /chat\.completion\.chunk/);
     assert.match(chatText, /CHAT_OK/);
     assert.match(chatText, /\[DONE\]/);
+
+    const { type: ignoredToolType, ...chatFunction } = tools[0];
+    const chatTools = [{ type: "function", function: chatFunction }];
+    const chatToolResponse = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ messages: [{ role: "user", content: "Weather?" }], tools: chatTools, tool_choice: "required" }),
+    });
+    assert.equal(chatToolResponse.status, 200);
+    const chatToolBody = await chatToolResponse.json();
+    assert.equal(chatToolBody.choices[0].finish_reason, "tool_calls");
+    const chatCall = chatToolBody.choices[0].message.tool_calls[0];
+    assert.equal(chatCall.function.name, "get_weather");
+
+    const chatFinalResponse = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        messages: [
+          { role: "user", content: "Weather?" },
+          chatToolBody.choices[0].message,
+          { role: "tool", tool_call_id: chatCall.id, content: "{\"temperature_c\":25}" },
+        ],
+        tools: chatTools,
+      }),
+    });
+    assert.equal(chatFinalResponse.status, 200);
+    assert.equal((await chatFinalResponse.json()).choices[0].message.content, "The weather is 25 C.");
 
     const waiting = await fetch(`http://127.0.0.1:${port}/v1/responses`, { method: "POST", headers, body: JSON.stringify({ input: "WAIT_FOR_CANCEL", stream: true }) });
     const requestId = waiting.headers.get("x-request-id");

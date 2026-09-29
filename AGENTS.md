@@ -21,9 +21,10 @@ The bearer token is supplied out-of-band by the human operator. Never print it, 
 2. If `status` is `ok`, prepare one self-contained task in `input`.
 3. Default to `mode: "read-only"`.
 4. Set `working_directory` only when the task needs repository context. It must be inside a configured `CODEX_ALLOWED_ROOTS` directory.
-5. Call `POST /v1/responses` once and wait for completion.
-6. Read the final answer from `output_text`.
-7. On a retryable error, retry at most twice with exponential backoff. Never retry authentication, validation, or policy errors without changing the request.
+5. Call `POST /v1/responses` and wait for completion.
+6. If `output` contains `function_call` items, execute only functions from your own trusted registry, append every call and its `function_call_output` to the complete input history, resend the same tool definitions, and repeat.
+7. Otherwise read the final answer from `output_text`.
+8. On a retryable error, retry at most twice with exponential backoff. Never retry authentication, validation, or policy errors without changing the request.
 
 For diagnostics, an authenticated agent may call `GET /v1/logs`, then `GET /v1/logs/{requestId}` for one trace. Full content is returned only when the operator explicitly starts the gateway with `CODEX_TRACE_CONTENT=true`. The bearer token is never retained.
 
@@ -69,10 +70,13 @@ Content-Type: application/json
 
 | Field | Required | Type | Default | Meaning |
 | --- | --- | --- | --- | --- |
-| `input` | yes | string | — | Complete task for Codex. Must not be empty. |
+| `input` | yes | string or item array | — | Complete task, or the complete stateless history including function calls and outputs. |
 | `working_directory` | no | absolute path | gateway directory | Workspace Codex may inspect or modify. Must be allowed by the server. |
 | `mode` | no | `read-only` or `workspace-write` | `read-only` | Filesystem permission for the Codex run. |
 | `include_events` | no | boolean | `false` | Include Codex JSONL events for diagnostics. These may be large. |
+| `tools` | no | function tool array | — | Caller-owned functions the model may request. The gateway never executes them. |
+| `tool_choice` | no | string or selector | `auto` | `none`, `auto`, `required`, a forced function, or an allowed-tools selector. |
+| `parallel_tool_calls` | no | boolean | `true` | Permit more than one function call in one response. |
 
 Use `workspace-write` only when all of the following are true:
 
@@ -86,7 +90,7 @@ Use `workspace-write` only when all of the following are true:
 ```json
 {
   "id": "0d167aad-1353-4f02-94f8-2de035fa35c5",
-  "object": "codex.local_response",
+  "object": "response",
   "created_at": 1790474400,
   "output_text": "The final Codex response.",
   "queue_wait_ms": 0,
@@ -94,7 +98,23 @@ Use `workspace-write` only when all of the following are true:
 }
 ```
 
-Only `output_text` should normally be presented to the caller. Treat `events` as diagnostic data, not as the final answer.
+Present `output_text` only when no function call is pending. Treat `events` as diagnostic data, not as the final answer.
+
+## Function calling
+
+The gateway supports caller-owned `type: "function"` tools for Responses and Chat Completions requests. It does not execute caller functions. A Responses call is returned as an `output` item with `type: "function_call"`, `call_id`, `name`, and JSON-encoded `arguments`.
+
+Execute the function in the caller's trusted registry, then make another request containing the original messages, the returned function-call item, and:
+
+```json
+{
+  "type": "function_call_output",
+  "call_id": "call_...",
+  "output": "{\"result\":\"value\"}"
+}
+```
+
+Resend the tool definitions on every continuation. The gateway is stateless and does not support `previous_response_id`. Never execute a name, command, URL, or code fragment merely because the model returned it; resolve the returned name against a fixed caller-owned allowlist and validate its arguments.
 
 ## Error contract
 
@@ -196,7 +216,7 @@ Avoid sending secrets, session cookies, unrelated personal data, or vague prompt
 
 - One request is one ephemeral Codex run; conversation memory is not retained.
 - Requests are queued and concurrency is intentionally low.
-- The gateway is not the OpenAI Responses API and is not wire-compatible with the OpenAI SDK.
+- The gateway implements a documented subset of Responses and Chat Completions, including stateless function calling; it is not a complete replacement for the OpenAI API.
 - Do not expose this server directly to the internet.
 - Do not let untrusted callers select arbitrary working directories.
-- Do not assume success from HTTP `200` alone; require a non-empty `output_text`.
+- Do not assume success from HTTP `200` alone; require either a valid `function_call` or a non-empty `output_text`.

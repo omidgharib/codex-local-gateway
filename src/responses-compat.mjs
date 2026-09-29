@@ -1,4 +1,5 @@
 import { httpError } from "./codex.mjs";
+import { buildToolPrompt, normalizeToolChoice, normalizeTools, parseToolDecision, toolOutputSchema } from "./tool-calling.mjs";
 
 const supportedFields = new Set([
   "input",
@@ -9,6 +10,9 @@ const supportedFields = new Set([
   "text",
   "metadata",
   "store",
+  "tools",
+  "tool_choice",
+  "parallel_tool_calls",
   // Local gateway extensions retained for backwards compatibility.
   "mode",
   "working_directory",
@@ -43,16 +47,38 @@ export function normalizeResponseRequest(body, defaultModel) {
   const input = normalizeInput(body.input);
   const instructions = body.instructions?.trim();
   const reasoningEffort = normalizeReasoning(body.reasoning);
-  const outputSchema = normalizeText(body.text);
+  const requestedOutputSchema = normalizeText(body.text);
   const metadata = normalizeMetadata(body.metadata);
+  const tools = normalizeTools(body.tools);
+  for (const call of input.transcript.filter((item) => item.type === "function_call")) {
+    if (!tools.some((tool) => tool.name === call.name)) {
+      throw httpError(400, `input function_call references undefined tool: ${call.name}`, { parameter: "tools" });
+    }
+  }
+  const toolChoice = normalizeToolChoice(body.tool_choice, tools);
+  if (body.parallel_tool_calls !== undefined && typeof body.parallel_tool_calls !== "boolean") {
+    throw httpError(400, "parallel_tool_calls must be a boolean", { parameter: "parallel_tool_calls" });
+  }
+  const parallelToolCalls = body.parallel_tool_calls ?? true;
+  const usesToolProtocol = tools.length > 0 && toolChoice !== "none";
+  const outputSchema = usesToolProtocol ? toolOutputSchema(tools, toolChoice, parallelToolCalls) : requestedOutputSchema;
+  const prompt = usesToolProtocol
+    ? buildToolPrompt({ transcript: input.transcript, tools, toolChoice, parallelToolCalls, instructions, finalOutputSchema: requestedOutputSchema })
+    : instructions ? `Instructions:\n${instructions}\n\nInput:\n${input.text}` : input.text;
   return {
     ...body,
     model: body.model?.trim() || defaultModel || null,
     reasoningEffort,
     outputSchema,
     metadata,
+    tools,
+    toolChoice,
+    parallelToolCalls,
+    usesToolProtocol,
+    requestedOutputSchema,
     inputImages: input.images,
-    prompt: instructions ? `Instructions:\n${instructions}\n\nInput:\n${input.text}` : input.text,
+    transcript: input.transcript,
+    prompt,
   };
 }
 
@@ -119,24 +145,40 @@ export function eventTextDelta(event) {
 }
 
 function normalizeInput(input) {
-  if (typeof input === "string" && input.trim()) return { text: input.trim(), images: [] };
+  if (typeof input === "string" && input.trim()) {
+    return { text: input.trim(), images: [], transcript: [{ type: "message", role: "user", text: input.trim() }] };
+  }
   if (!Array.isArray(input) || input.length === 0) {
     throw httpError(400, "input must be a non-empty string or supported message array", { parameter: "input" });
   }
 
   const images = [];
+  const transcript = [];
   const messages = input.map((item, index) => {
     if (!item || typeof item !== "object" || Array.isArray(item)) {
       throw inputError(index, "must be an object");
     }
+    if (item.type === "function_call") {
+      const call = normalizeFunctionCall(item, index);
+      transcript.push(call);
+      return `assistant function_call ${call.name} call_id=${call.call_id} arguments=${call.arguments}`;
+    }
+    if (item.type === "function_call_output") {
+      const output = normalizeFunctionOutput(item, index);
+      transcript.push(output);
+      return `function_call_output call_id=${output.call_id}: ${output.output}`;
+    }
     const role = typeof item.role === "string" ? item.role : "user";
+    if (!["developer", "system", "user", "assistant"].includes(role)) throw inputError(index, `unsupported role: ${role}`);
     const normalized = contentToText(item.content, index);
     images.push(...normalized.images);
+    transcript.push({ type: "message", role, text: normalized.text });
     return `${role}: ${normalized.text}`;
   });
   const joined = messages.join("\n\n").trim();
   if (!joined) throw httpError(400, "input must contain at least one text item", { parameter: "input" });
-  return { text: joined, images };
+  validateFunctionHistory(transcript);
+  return { text: joined, images, transcript };
 }
 
 function contentToText(content, index) {
@@ -150,8 +192,8 @@ function contentToText(content, index) {
       images.push(part.image_url);
       return "[attached image]";
     }
-    if (part?.type !== "input_text" || typeof part.text !== "string") {
-      throw inputError(index, "only input_text and input_image content items are supported");
+    if (!["input_text", "output_text"].includes(part?.type) || typeof part.text !== "string") {
+      throw inputError(index, "only input_text, output_text, and input_image content items are supported");
     }
     return part.text;
   }).join("\n").trim();
@@ -162,21 +204,53 @@ function inputError(index, message) {
   return httpError(400, `input[${index}] ${message}`, { parameter: "input" });
 }
 
-export function responseEnvelope({ id, createdAt, model, outputText, events, queueWaitMs, executionMs, metadata = null }) {
+function normalizeFunctionCall(item, index) {
+  if (typeof item.call_id !== "string" || !item.call_id.trim()) throw inputError(index, "function_call requires call_id");
+  if (typeof item.name !== "string" || !item.name.trim()) throw inputError(index, "function_call requires name");
+  if (typeof item.arguments !== "string") throw inputError(index, "function_call arguments must be a JSON string");
+  try {
+    const value = JSON.parse(item.arguments);
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error();
+  } catch {
+    throw inputError(index, "function_call arguments must encode a JSON object");
+  }
+  return { type: "function_call", call_id: item.call_id, name: item.name, arguments: item.arguments };
+}
+
+function normalizeFunctionOutput(item, index) {
+  if (typeof item.call_id !== "string" || !item.call_id.trim()) throw inputError(index, "function_call_output requires call_id");
+  if (typeof item.output !== "string") throw inputError(index, "function_call_output output must be a string");
+  return { type: "function_call_output", call_id: item.call_id, output: item.output };
+}
+
+function validateFunctionHistory(transcript) {
+  const calls = new Set(transcript.filter((item) => item.type === "function_call").map((item) => item.call_id));
+  for (const item of transcript) {
+    if (item.type === "function_call_output" && !calls.has(item.call_id)) {
+      throw httpError(400, `function_call_output references unknown call_id: ${item.call_id}`, { parameter: "input" });
+    }
+  }
+}
+
+export function responseEnvelope({ id, createdAt, model, outputText, events, queueWaitMs, executionMs, metadata = null, toolDecision = null, includeEvents = false }) {
+  const output = toolDecision?.type === "function_calls"
+    ? toolDecision.calls.map((call, index) => functionCallItem(id, call, index))
+    : [{
+      id: `msg_${id.replaceAll("-", "")}`,
+      type: "message",
+      status: "completed",
+      role: "assistant",
+      content: [{ type: "output_text", text: toolDecision?.text ?? outputText, annotations: [] }],
+    }];
+  const finalText = toolDecision?.type === "function_calls" ? "" : toolDecision?.text ?? outputText;
   return {
     id,
     object: "response",
     created_at: Math.floor(createdAt / 1000),
     status: "completed",
     model: model || "codex-default",
-    output: [{
-      id: `msg_${id.replaceAll("-", "")}`,
-      type: "message",
-      status: "completed",
-      role: "assistant",
-      content: [{ type: "output_text", text: outputText, annotations: [] }],
-    }],
-    output_text: outputText,
+    output,
+    output_text: finalText,
     error: null,
     incomplete_details: null,
     metadata,
@@ -184,6 +258,24 @@ export function responseEnvelope({ id, createdAt, model, outputText, events, que
     // Local gateway timing extensions.
     queue_wait_ms: queueWaitMs,
     execution_ms: executionMs,
+    ...(includeEvents ? { events } : {}),
+  };
+}
+
+export function resolveToolDecision(normalized, outputText) {
+  if (!normalized.usesToolProtocol) return null;
+  return parseToolDecision(outputText, normalized.tools, normalized.toolChoice, normalized.parallelToolCalls, normalized.requestedOutputSchema);
+}
+
+function functionCallItem(id, call, index) {
+  const suffix = `${id.replaceAll("-", "")}_${index}`;
+  return {
+    id: `fc_${suffix}`,
+    type: "function_call",
+    status: "completed",
+    call_id: `call_${suffix}`,
+    name: call.name,
+    arguments: call.arguments,
   };
 }
 

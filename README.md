@@ -74,9 +74,64 @@ Invoke-RestMethod `
 
 ### سازگاری محدود با Responses API
 
-مسیر `POST /v1/responses` بدنه‌ای شبیه Responses API می‌پذیرد. فیلدهای پشتیبانی‌شده `model`، `input` (رشته یا message array با `input_text` و `input_image`)، `instructions`، `stream`، `reasoning.effort`، `text.format`، `metadata` و `store: false` هستند. تصویر می‌تواند data URL از نوع PNG/JPEG/WEBP/GIF یا مسیر absolute داخل `CODEX_ALLOWED_ROOTS` باشد؛ gateway تصویر اینترنتی دانلود نمی‌کند. `text.format` می‌تواند متن عادی یا `json_schema` باشد و مستقیماً به structured output در Codex CLI متصل می‌شود. فیلدهای محلیِ قدیمی `mode`، `working_directory` و `include_events` نیز برقرارند. پارامترهای اجرا‌نشده، از جمله `temperature`، `tools`، `previous_response_id` یا `store: true` با خطای `400` و نام پارامتر برگردانده می‌شوند؛ این گیت‌وی جایگزین API رسمی OpenAI نیست.
+مسیر `POST /v1/responses` بدنه‌ای شبیه Responses API می‌پذیرد. فیلدهای پشتیبانی‌شده `model`، `input`، `instructions`، `stream`، `reasoning.effort`، `text.format`، `metadata`، `tools`، `tool_choice`، `parallel_tool_calls` و `store: false` هستند. تصویر می‌تواند data URL از نوع PNG/JPEG/WEBP/GIF یا مسیر absolute داخل `CODEX_ALLOWED_ROOTS` باشد؛ gateway تصویر اینترنتی دانلود نمی‌کند. `text.format` می‌تواند متن عادی یا `json_schema` باشد. فیلدهای محلی `mode`، `working_directory` و `include_events` نیز برقرارند. پارامترهای اجرا‌نشده، از جمله `temperature`، `previous_response_id` یا `store: true` با خطای `400` و نام پارامتر برگردانده می‌شوند؛ این گیت‌وی جایگزین کامل API رسمی OpenAI نیست.
 
-با `stream: true` پاسخ به‌صورت SSE ارسال می‌شود. جریان با رویدادهای `response.created` و `response.in_progress` شروع، متن با `response.output_text.delta` ارسال و با `response.completed` و `[DONE]` تمام می‌شود. شناسه درخواست از header به نام `x-request-id` قابل دریافت است.
+با `stream: true` پاسخ به‌صورت SSE ارسال می‌شود. جریان با رویدادهای `response.created` و `response.in_progress` شروع می‌شود. متن با `response.output_text.delta` و function call با رویدادهای `response.output_item.added`، `response.function_call_arguments.delta` و `response.function_call_arguments.done` ارسال می‌شود. جریان با `response.completed` و `[DONE]` تمام می‌شود. شناسه درخواست از header به نام `x-request-id` قابل دریافت است.
+
+### Function calling
+
+فقط ابزارهای caller-owned با `type: "function"` پشتیبانی می‌شوند. Gateway هیچ function ارسالی را اجرا نمی‌کند؛ کلاینت باید call را اجرا کند و تاریخچه کامل را در درخواست بعدی بازبفرستد. این رفتار عمداً stateless است و `previous_response_id` پشتیبانی نمی‌شود.
+
+درخواست اول:
+
+```json
+{
+  "input": "دمای تهران را از سرویس خصوصی من بگیر",
+  "tools": [{
+    "type": "function",
+    "name": "lookup_temperature",
+    "description": "Get the current temperature for a city",
+    "strict": true,
+    "parameters": {
+      "type": "object",
+      "properties": { "city": { "type": "string" } },
+      "required": ["city"],
+      "additionalProperties": false
+    }
+  }],
+  "tool_choice": "auto",
+  "parallel_tool_calls": false
+}
+```
+
+اگر `output` دارای آیتم `function_call` بود، کلاینت function را اجرا می‌کند. سپس پیام کاربر، همان آیتم call و خروجی ابزار را با همان `call_id` می‌فرستد:
+
+```json
+{
+  "input": [
+    { "role": "user", "content": "دمای تهران را از سرویس خصوصی من بگیر" },
+    {
+      "type": "function_call",
+      "id": "fc_...",
+      "call_id": "call_...",
+      "name": "lookup_temperature",
+      "arguments": "{\"city\":\"Tehran\"}"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "call_...",
+      "output": "{\"temperature_c\":23}"
+    }
+  ],
+  "tools": [{
+    "type": "function",
+    "name": "lookup_temperature",
+    "parameters": { "type": "object", "properties": { "city": { "type": "string" } } }
+  }]
+}
+```
+
+`tool_choice` از `none`، `auto`، `required`، انتخاب اجباری یک function و `allowed_tools` پشتیبانی می‌کند. در حالت `strict: true`، gateway آرگومان تولیدشده را پیش از تحویل به caller در برابر بخش‌های متداول JSON Schema اعتبارسنجی می‌کند.
 
 برای لغو درخواست در صف یا در حال اجرا:
 
@@ -89,7 +144,7 @@ Authorization: Bearer <LOCAL_CODEX_GATEWAY_TOKEN>
 
 ### Chat Completions
 
-مسیر `POST /v1/chat/completions` برای کلاینت‌های متنی قدیمی‌تر فراهم است و حالت عادی و `stream: true` را پشتیبانی می‌کند. در این نسخه فقط پیام‌های متنی با roleهای `developer`، `system`، `user` و `assistant` پذیرفته می‌شوند. پارامترهای پشتیبانی‌شده شامل `model`، `reasoning_effort`، `response_format`، `metadata` و `store: false` هستند.
+مسیر `POST /v1/chat/completions` برای کلاینت‌های قدیمی‌تر فراهم است و حالت عادی، `stream: true` و function calling را پشتیبانی می‌کند. پیام‌های متنی با roleهای `developer`، `system`، `user` و `assistant`، پیام assistant دارای `tool_calls` و پیام `tool` دارای `tool_call_id` پذیرفته می‌شوند. ابزارها در قالب متداول Chat Completions یعنی `{ "type": "function", "function": {...} }` ارسال می‌شوند.
 
 ```json
 {
@@ -153,6 +208,37 @@ Body:
 node --test
 ```
 
+برای تست واقعی دو مرحله‌ای با Codex CLI احراز‌شده و بدون اجرای ابزار خارجی واقعی:
+
+```powershell
+node scripts/smoke-tool-calling.mjs
+```
+
+برای اجرای نمونه PowerShell که function call را دریافت می‌کند و ابزار `get_weather` را با API عمومی Open-Meteo اجرا می‌کند:
+
+```powershell
+$env:LOCAL_CODEX_GATEWAY_TOKEN = "توکن-gateway"
+.\scripts\example-tool-calling.ps1
+```
+
+متن درخواست، URL gateway و مدل اختیاری‌اند:
+
+```powershell
+.\scripts\example-tool-calling.ps1 `
+  -Prompt "هوای پاریس الان چطور است؟" `
+  -GatewayUrl "http://127.0.0.1:4317" `
+  -Model "gpt-5.6-terra"
+```
+
+نمونه‌ی کدنویسی، ابزار `read_selected_source` را در اختیار Codex می‌گذارد و فقط همان فایلی را می‌خواند که اپراتور انتخاب کرده است:
+
+```powershell
+$env:LOCAL_CODEX_GATEWAY_TOKEN = "توکن-gateway"
+.\scripts\example-code-tool-calling.ps1 `
+  -FilePath ".\fixtures\sample-buggy.js" `
+  -Prompt "کد را review کن و باگ‌های مهم را با راه‌حل توضیح بده"
+```
+
 ## اجرای Docker
 
 فایل‌های `Dockerfile` و `docker-compose.yml` آماده‌اند. ورود Codex و workspace به container mount می‌شوند و پورت فقط روی localhost منتشر می‌شود:
@@ -186,6 +272,8 @@ docker compose up --build -d
 - سرویس فقط روی `127.0.0.1` گوش می‌دهد؛ آن را مستقیماً روی اینترنت منتشر نکنید.
 - متن میانی وابسته به eventهای Codex CLI است؛ بعضی نسخه‌ها ممکن است متن را در یک delta نهایی بفرستند.
 - هر فراخوانی یک اجرای ephemeral جدید است و حافظه مکالمه ندارد.
+- function calling با orchestration ساختاریافته روی Codex CLI پیاده شده است؛ functionهای caller داخل gateway یا Codex اجرا نمی‌شوند.
+- برای ادامه tool call باید تاریخچه کامل همراه `function_call` و `function_call_output` دوباره ارسال شود؛ `previous_response_id` وجود ندارد.
 - محدودیت مصرف و دسترسی مدل تابع حساب Codex شماست.
 - این gateway برای استفاده شخصی و کم‌هم‌زمانی طراحی شده است.
 - فعال‌سازی `CODEX_TRACE_CONTENT` می‌تواند secretهای موجود در prompt یا خروجی را موقتاً در حافظه نگه دارد؛ retention را کوتاه و دسترسی به دستگاه را محدود نگه دارید.
