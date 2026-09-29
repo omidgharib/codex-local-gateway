@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { eventTextDelta, normalizeResponseRequest, responseEnvelope, streamEvents } from "../src/responses-compat.mjs";
+import { eventTextDelta, normalizeResponseRequest, resolveToolDecision, responseEnvelope, streamEvents } from "../src/responses-compat.mjs";
 
 test("normalizes supported Responses-style input and model", () => {
   const request = normalizeResponseRequest({
@@ -75,4 +75,75 @@ test("returns a Responses-shaped completion envelope", () => {
   assert.equal(response.status, "completed");
   assert.equal(response.output[0].content[0].text, "Hello");
   assert.equal(response.usage.total_tokens, 13);
+});
+
+test("normalizes function tools and returns function_call output items", () => {
+  const normalized = normalizeResponseRequest({
+    input: "What is the weather in Tehran?",
+    tools: [{
+      type: "function",
+      name: "get_weather",
+      description: "Get weather",
+      strict: true,
+      parameters: {
+        type: "object",
+        properties: { city: { type: "string" } },
+        required: ["city"],
+        additionalProperties: false,
+      },
+    }],
+    tool_choice: "required",
+    parallel_tool_calls: false,
+  }, null);
+  assert.equal(normalized.usesToolProtocol, true);
+  assert.match(normalized.prompt, /caller-owned function-calling protocol/);
+
+  const decision = resolveToolDecision(normalized, JSON.stringify({
+    kind: "function_calls",
+    message: "",
+    calls: [{ name: "get_weather", arguments: "{\"city\":\"Tehran\"}" }],
+  }));
+  const response = responseEnvelope({
+    id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+    createdAt: 1_700_000_000_000,
+    outputText: "ignored",
+    events: [{ type: "turn.completed", usage: { input_tokens: 10, output_tokens: 3 } }],
+    queueWaitMs: 1,
+    executionMs: 2,
+    toolDecision: decision,
+    includeEvents: true,
+  });
+  assert.equal(response.output_text, "");
+  assert.equal(response.output[0].type, "function_call");
+  assert.equal(response.output[0].name, "get_weather");
+  assert.equal(response.events.length, 1);
+});
+
+test("accepts replayed function calls and outputs and enforces strict arguments", () => {
+  const tools = [{
+    type: "function",
+    name: "get_weather",
+    strict: true,
+    parameters: { type: "object", properties: { city: { type: "string" } }, required: ["city"], additionalProperties: false },
+  }];
+  const request = normalizeResponseRequest({
+    tools,
+    input: [
+      { role: "user", content: "Weather?" },
+      { type: "function_call", call_id: "call_1", name: "get_weather", arguments: "{\"city\":\"Tehran\"}" },
+      { type: "function_call_output", call_id: "call_1", output: "{\"temperature_c\":25}" },
+    ],
+  }, null);
+  assert.match(request.prompt, /temperature_c/);
+  assert.throws(() => resolveToolDecision(request, JSON.stringify({
+    kind: "function_calls", message: "", calls: [{ name: "get_weather", arguments: "{\"unknown\":1}" }],
+  })), /strict schema/);
+  assert.throws(() => normalizeResponseRequest({
+    tools,
+    input: [{ type: "function_call_output", call_id: "missing", output: "x" }],
+  }, null), /unknown call_id/);
+  assert.throws(() => normalizeResponseRequest({
+    input: "x",
+    tools: [{ type: "function", name: "bad", strict: true, parameters: { type: "object", properties: { x: { type: "string" } } } }],
+  }, null), /additionalProperties/);
 });

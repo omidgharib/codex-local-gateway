@@ -6,7 +6,8 @@
   "description": "A localhost-only HTTP gateway for an authenticated Codex CLI session.",
   "scripts": {
     "start": "node src/server.mjs",
-    "test": "node --test"
+    "test": "node --test",
+    "smoke:tools": "node scripts/smoke-tool-calling.mjs"
   },
   "engines": {
     "node": ">=20"

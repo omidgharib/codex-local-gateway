@@ -7,7 +7,7 @@ import { WorkQueue } from "./queue.mjs";
 import { httpError, runCodex } from "./codex.mjs";
 import { TraceStore } from "./trace-store.mjs";
 import { loadLocalEnv } from "./local-env.mjs";
-import { eventTextDelta, normalizeResponseRequest, responseEnvelope, streamEvents } from "./responses-compat.mjs";
+import { eventTextDelta, normalizeResponseRequest, resolveToolDecision, responseEnvelope, streamEvents } from "./responses-compat.mjs";
 import { chatChunk, chatEnvelope, normalizeChatRequest } from "./chat-compat.mjs";
 
 loadLocalEnv();
@@ -119,6 +119,7 @@ const server = http.createServer(async (request, response) => {
     const queuedAt = Date.now();
     let startedAt;
     let result;
+    let toolDecision;
     try {
       result = await queue.add(() => {
         startedAt = Date.now();
@@ -133,7 +134,7 @@ const server = http.createServer(async (request, response) => {
           outputSchema: normalized.outputSchema,
           inputImages,
           signal: controller.signal,
-          onEvent: streaming ? (event) => {
+          onEvent: streaming && !normalized.usesToolProtocol ? (event) => {
             const delta = eventTextDelta(event);
             if (delta) sendEvent(response, apiKind === "chat"
               ? chatChunk({ id: requestId, createdAt: streamCreatedAt, model: normalized.model, delta: { content: delta } })
@@ -141,6 +142,7 @@ const server = http.createServer(async (request, response) => {
           } : undefined,
         }, config);
       }, { signal: controller.signal });
+      toolDecision = resolveToolDecision(normalized, result.outputText);
       traces.markCompleted(trace, result);
     } catch (error) {
       const status = Number.isInteger(error.status) ? error.status : 500;
@@ -169,18 +171,24 @@ const server = http.createServer(async (request, response) => {
       queueWaitMs: startedAt - queuedAt,
       executionMs: finishedAt - startedAt,
       metadata: normalized.metadata,
+      toolDecision,
+      includeEvents: body.include_events === true,
     });
     const envelope = apiKind === "chat" ? chatEnvelope({
       id: requestId,
       createdAt: finishedAt,
       model: normalized.model,
-      outputText: result.outputText,
+      outputText: responsesEnvelope.output_text,
+      output: responsesEnvelope.output,
       usage: responsesEnvelope.usage,
       metadata: normalized.metadata,
+      events: result.events,
+      includeEvents: body.include_events === true,
     }) : responsesEnvelope;
     if (streaming) {
+      if (normalized.usesToolProtocol) sendToolProtocolStream(response, apiKind, responsesEnvelope, streamCreatedAt, normalized.model);
       sendEvent(response, apiKind === "chat"
-        ? chatChunk({ id: requestId, createdAt: streamCreatedAt, model: normalized.model, delta: {}, finishReason: "stop" })
+        ? chatChunk({ id: requestId, createdAt: streamCreatedAt, model: normalized.model, delta: {}, finishReason: responsesEnvelope.output.some((item) => item.type === "function_call") ? "tool_calls" : "stop" })
         : { type: "response.completed", response: envelope });
       return response.end("data: [DONE]\n\n");
     }
@@ -209,6 +217,41 @@ server.listen(config.port, config.host, () => {
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.once(signal, () => gracefulShutdown(signal));
+}
+
+function sendToolProtocolStream(response, apiKind, envelope, createdAt, model) {
+  const calls = envelope.output.filter((item) => item.type === "function_call");
+  if (apiKind === "chat") {
+    if (calls.length) {
+      sendEvent(response, chatChunk({
+        id: envelope.id,
+        createdAt,
+        model,
+        delta: {
+          tool_calls: calls.map((call, index) => ({
+            index,
+            id: call.call_id,
+            type: "function",
+            function: { name: call.name, arguments: call.arguments },
+          })),
+        },
+      }));
+    } else if (envelope.output_text) {
+      sendEvent(response, chatChunk({ id: envelope.id, createdAt, model, delta: { content: envelope.output_text } }));
+    }
+    return;
+  }
+  if (!calls.length) {
+    if (envelope.output_text) sendEvent(response, { type: "response.output_text.delta", delta: envelope.output_text });
+    return;
+  }
+  let sequenceNumber = 2;
+  for (const [outputIndex, call] of calls.entries()) {
+    sendEvent(response, { type: "response.output_item.added", sequence_number: sequenceNumber++, output_index: outputIndex, item: { ...call, status: "in_progress", arguments: "" } });
+    sendEvent(response, { type: "response.function_call_arguments.delta", sequence_number: sequenceNumber++, item_id: call.id, output_index: outputIndex, delta: call.arguments });
+    sendEvent(response, { type: "response.function_call_arguments.done", sequence_number: sequenceNumber++, item_id: call.id, output_index: outputIndex, arguments: call.arguments });
+    sendEvent(response, { type: "response.output_item.done", sequence_number: sequenceNumber++, output_index: outputIndex, item: call });
+  }
 }
 
 function gracefulShutdown(signal) {

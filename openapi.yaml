@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Codex Local Gateway
-  version: 0.1.0
+  version: 0.3.0
   description: >-
     Localhost-only, limited Responses API-compatible gateway for running a task
     through the user's authenticated Codex CLI session. Only documented request
@@ -201,7 +201,7 @@ components:
               minLength: 1
             - type: array
               minItems: 1
-          description: Text input or a message array using input_text and input_image items. Images must be base64 data URLs or allowed local absolute paths.
+          description: Text input or a stateless conversation array containing messages, function_call, and function_call_output items. Images must be base64 data URLs or allowed local absolute paths.
         instructions:
           type: string
           description: Instructions prepended to the Codex task
@@ -244,6 +244,18 @@ components:
           type: boolean
           const: false
           description: This ephemeral gateway only supports false.
+        tools:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items:
+            $ref: "#/components/schemas/FunctionTool"
+          description: Caller-owned function tools. The caller executes returned calls and replays the complete history with function_call_output items.
+        tool_choice:
+          $ref: "#/components/schemas/ToolChoice"
+        parallel_tool_calls:
+          type: boolean
+          default: true
         working_directory:
           type: string
           description: Absolute path inside a server-configured allowed root
@@ -294,6 +306,42 @@ components:
         events:
           type: array
           items: {}
+          description: Present only when include_events=true.
+    FunctionTool:
+      type: object
+      additionalProperties: false
+      required: [type, name, parameters]
+      properties:
+        type: { const: function }
+        name: { type: string, pattern: "^[A-Za-z0-9_-]{1,64}$" }
+        description: { type: string }
+        parameters: { type: object }
+        strict: { type: boolean, default: false }
+    ToolChoice:
+      oneOf:
+        - type: string
+          enum: [none, auto, required]
+        - type: object
+          additionalProperties: false
+          required: [type, name]
+          properties:
+            type: { const: function }
+            name: { type: string }
+        - type: object
+          additionalProperties: false
+          required: [type, mode, tools]
+          properties:
+            type: { const: allowed_tools }
+            mode: { type: string, enum: [auto, required] }
+            tools:
+              type: array
+              minItems: 1
+              items:
+                type: object
+                required: [type, name]
+                properties:
+                  type: { const: function }
+                  name: { type: string }
     ChatRequest:
       type: object
       additionalProperties: false
@@ -305,15 +353,22 @@ components:
           minItems: 1
           items:
             type: object
-            required: [role, content]
-            properties:
-              role: { type: string, enum: [developer, system, user, assistant] }
-              content: { type: string }
+            description: Text message, assistant tool-call message, or tool result message.
         stream: { type: boolean, default: false }
         reasoning_effort: { type: string, enum: [none, minimal, low, medium, high, xhigh] }
         response_format: { type: object }
         metadata: { type: object, additionalProperties: { type: string }, maxProperties: 16 }
         store: { type: boolean, const: false }
+        tools:
+          type: array
+          items:
+            type: object
+            required: [type, function]
+            properties:
+              type: { const: function }
+              function: { type: object }
+        tool_choice: {}
+        parallel_tool_calls: { type: boolean, default: true }
         working_directory: { type: string }
         mode: { type: string, enum: [read-only, workspace-write], default: read-only }
         include_events: { type: boolean, default: false }
