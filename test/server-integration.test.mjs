@@ -29,6 +29,19 @@ test("serves Responses and Chat Completions with streaming and cancellation", { 
     await waitForReady(child, port);
     const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
 
+    const modelsResponse = await fetch(`http://127.0.0.1:${port}/v1/models`, { headers });
+    assert.equal(modelsResponse.status, 200);
+    const models = await modelsResponse.json();
+    assert.deepEqual(models.data.map((model) => model.id), ["fake-model"]);
+    assert.equal(models.data[0].is_default, true);
+    assert.deepEqual(models.data[0].supported_reasoning_efforts.map((item) => item.effort), ["medium"]);
+
+    const hiddenModelsResponse = await fetch(`http://127.0.0.1:${port}/v1/models?include_hidden=true`, { headers });
+    assert.deepEqual((await hiddenModelsResponse.json()).data.map((model) => model.id), ["fake-model", "hidden-model"]);
+
+    const unauthenticatedModels = await fetch(`http://127.0.0.1:${port}/v1/models`);
+    assert.equal(unauthenticatedModels.status, 401);
+
     const normal = await fetch(`http://127.0.0.1:${port}/v1/responses`, { method: "POST", headers, body: JSON.stringify({ input: "TEST" }) });
     assert.equal(normal.status, 200);
     assert.equal((await normal.json()).output_text, "RESPONSE_OK");
