@@ -22,7 +22,7 @@ test("serves Responses and Chat Completions with streaming and cancellation", { 
       CODEX_BIN: process.execPath,
       CODEX_BIN_ARGS: JSON.stringify([path.join(root, "fixtures", "fake-codex.mjs")]),
       CODEX_HOME: root,
-      CODEX_TRACE_CONTENT: "false",
+      CODEX_TRACE_CONTENT: "true",
     },
   });
   try {
@@ -87,11 +87,12 @@ test("serves Responses and Chat Completions with streaming and cancellation", { 
     assert.match(toolStreamText, /response\.function_call_arguments\.done/);
     assert.match(toolStreamText, /get_weather/);
 
-    const chat = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, { method: "POST", headers, body: JSON.stringify({ messages: [{ role: "user", content: "CHAT_TEST" }], stream: true }) });
+    const chat = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, { method: "POST", headers, body: JSON.stringify({ messages: [{ role: "user", content: "CHAT_TEST" }], stream: true, max_tokens: 2048, stream_options: { include_usage: true } }) });
     const chatText = await chat.text();
     assert.match(chat.headers.get("content-type"), /text\/event-stream/);
     assert.match(chatText, /chat\.completion\.chunk/);
     assert.match(chatText, /CHAT_OK/);
+    assert.match(chatText, /"choices":\[\],"usage":\{/);
     assert.match(chatText, /\[DONE\]/);
 
     const { type: ignoredToolType, ...chatFunction } = tools[0];
@@ -119,8 +120,18 @@ test("serves Responses and Chat Completions with streaming and cancellation", { 
         tools: chatTools,
       }),
     });
+    const chatFinalRequestId = chatFinalResponse.headers.get("x-request-id");
     assert.equal(chatFinalResponse.status, 200);
     assert.equal((await chatFinalResponse.json()).choices[0].message.content, "The weather is 25 C.");
+
+    const traceResponse = await fetch(`http://127.0.0.1:${port}/v1/logs/${chatFinalRequestId}`, { headers });
+    assert.equal(traceResponse.status, 200);
+    const trace = (await traceResponse.json()).data;
+    assert.equal(trace.detail.request.endpoint, "/v1/chat/completions");
+    assert.equal(trace.detail.request.parameters.messages.at(-1).role, "tool");
+    assert.equal(trace.detail.response.object, "chat.completion");
+    assert.equal(trace.detail.response.choices[0].message.content, "The weather is 25 C.");
+    assert.ok(Array.isArray(trace.detail.diagnostics.events));
 
     const waiting = await fetch(`http://127.0.0.1:${port}/v1/responses`, { method: "POST", headers, body: JSON.stringify({ input: "WAIT_FOR_CANCEL", stream: true }) });
     const requestId = waiting.headers.get("x-request-id");

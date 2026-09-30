@@ -9,7 +9,7 @@ import { TraceStore } from "./trace-store.mjs";
 import { loadLocalEnv } from "./local-env.mjs";
 import { listModels } from "./models.mjs";
 import { eventTextDelta, normalizeResponseRequest, resolveToolDecision, responseEnvelope, streamEvents } from "./responses-compat.mjs";
-import { chatChunk, chatEnvelope, normalizeChatRequest } from "./chat-compat.mjs";
+import { chatChunk, chatEnvelope, chatUsageChunk, normalizeChatRequest } from "./chat-compat.mjs";
 
 loadLocalEnv();
 const config = loadConfig();
@@ -100,20 +100,23 @@ const server = http.createServer(async (request, response) => {
     if (!directoryStat?.isDirectory()) throw httpError(400, "working_directory does not exist");
     const inputImages = await validateInputImages(normalized.inputImages, config);
 
+    const endpoint = apiKind === "chat" ? "/v1/chat/completions" : "/v1/responses";
     const trace = traces.create({
       id: requestId,
       mode: body.mode || "read-only",
       workspace: path.basename(workingDirectory),
       input_chars: prompt.length,
-      endpoint: apiKind === "chat" ? "/v1/chat/completions" : "/v1/responses",
+      endpoint,
       model: normalized.model || "codex-default",
     }, {
-      input: body.input,
-      instructions: normalized.instructions,
-      model: normalized.model,
-      working_directory: workingDirectory,
-      mode: body.mode || "read-only",
-      include_events: body.include_events === true,
+      method: request.method,
+      endpoint,
+      parameters: body,
+      resolved: {
+        model: normalized.model || "codex-default",
+        working_directory: workingDirectory,
+        mode: body.mode || "read-only",
+      },
     });
     const controller = new AbortController();
     activeRequests.set(requestId, controller);
@@ -199,11 +202,20 @@ const server = http.createServer(async (request, response) => {
       events: result.events,
       includeEvents: body.include_events === true,
     }) : responsesEnvelope;
+    traces.setResponse(trace, envelope);
     if (streaming) {
       if (normalized.usesToolProtocol) sendToolProtocolStream(response, apiKind, responsesEnvelope, streamCreatedAt, normalized.model);
       sendEvent(response, apiKind === "chat"
         ? chatChunk({ id: requestId, createdAt: streamCreatedAt, model: normalized.model, delta: {}, finishReason: responsesEnvelope.output.some((item) => item.type === "function_call") ? "tool_calls" : "stop" })
         : { type: "response.completed", response: envelope });
+      if (apiKind === "chat" && normalized.streamOptions.include_usage) {
+        sendEvent(response, chatUsageChunk({
+          id: requestId,
+          createdAt: streamCreatedAt,
+          model: normalized.model,
+          usage: responsesEnvelope.usage,
+        }));
+      }
       return response.end("data: [DONE]\n\n");
     }
     return json(response, 200, envelope);

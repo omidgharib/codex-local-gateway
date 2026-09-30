@@ -1,11 +1,27 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chatChunk, chatEnvelope, normalizeChatRequest } from "../src/chat-compat.mjs";
+import { chatChunk, chatEnvelope, chatUsageChunk, normalizeChatRequest } from "../src/chat-compat.mjs";
 
 test("normalizes text-only chat messages", () => {
   const request = normalizeChatRequest({ model: "m", messages: [{ role: "user", content: "Hello" }] }, null);
   assert.equal(request.model, "m");
   assert.match(request.prompt, /user: Hello/);
+});
+
+test("accepts OpenAI client token and streaming options", () => {
+  const request = normalizeChatRequest({
+    messages: [{ role: "user", content: "Hello" }],
+    stream: true,
+    max_tokens: 2048,
+    stream_options: { include_usage: true },
+  }, null);
+  assert.equal(request.maxTokens, 2048);
+  assert.equal(request.streamOptions.include_usage, true);
+
+  assert.throws(() => normalizeChatRequest({
+    messages: [{ role: "user", content: "Hello" }],
+    stream_options: { include_usage: true },
+  }, null), /requires stream/);
 });
 
 test("maps Chat Completions structured output", () => {
@@ -23,6 +39,9 @@ test("creates chat completion and streaming chunk envelopes", () => {
   assert.equal(completion.usage.total_tokens, 3);
   const chunk = chatChunk({ id: "a-b", createdAt: 1000, model: null, delta: { content: "H" } });
   assert.equal(chunk.object, "chat.completion.chunk");
+  const usageChunk = chatUsageChunk({ id: "a-b", createdAt: 1000, model: null, usage: { input_tokens: 2, output_tokens: 1, total_tokens: 3 } });
+  assert.deepEqual(usageChunk.choices, []);
+  assert.equal(usageChunk.usage.total_tokens, 3);
 });
 
 test("rejects unsupported Chat Completions fields and malformed tool messages", () => {
