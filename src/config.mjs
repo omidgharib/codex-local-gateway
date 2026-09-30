@@ -33,6 +33,8 @@ export function loadConfig(env = process.env, cwd = process.cwd()) {
     traceFile: env.CODEX_TRACE_FILE?.trim() ? path.resolve(env.CODEX_TRACE_FILE.trim()) : null,
     allowWrites: env.CODEX_ALLOW_WRITES === "true",
     model: env.CODEX_MODEL?.trim() || null,
+    modelsCacheMs: integer(env.CODEX_MODELS_CACHE_MS, 300_000, 0, 86_400_000),
+    modelsTimeoutMs: integer(env.CODEX_MODELS_TIMEOUT_MS, 15_000, 1_000, 120_000),
   };
 }
 

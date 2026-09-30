@@ -1,92 +1,137 @@
 # Codex Local Gateway
 
-یک سرویس HTTP محلی برای ارسال درخواست‌های شخصی به Codex با همان ورود رسمی Codex CLI. این پروژه از API key یا اتوماسیون مرورگر استفاده نمی‌کند.
+A localhost-only HTTP gateway that lets an authorized client run tasks through the human operator's authenticated Codex CLI session. It uses the official Codex login—not an OpenAI API key, browser cookies, or browser automation.
 
-برای اتصال عامل‌های هوش مصنوعی، فایل [`AGENTS.md`](./AGENTS.md) را در اختیار عامل قرار دهید. قرارداد ماشین‌خوان API نیز در [`openapi.yaml`](./openapi.yaml) موجود است.
+This README is a complete integration guide. An AI agent receiving only this file should follow the contract below.
 
-داشبورد trace پس از اجرای سرویس در آدرس `http://127.0.0.1:4317/dashboard` در دسترس است. برای مشاهده داده‌ها، token محلی gateway را داخل داشبورد وارد کنید.
+## AI client contract
 
-فونت فارسی داشبورد [Vazirmatn](https://github.com/rastikerdar/vazirmatn) است که به‌صورت محلی سرو می‌شود و تحت مجوز SIL Open Font License 1.1 در `public/fonts/OFL.txt` قرار دارد.
+### Connection
 
-## پیش‌نیازها
+- Base URL: `http://127.0.0.1:4317`
+- Authentication: `Authorization: Bearer <LOCAL_CODEX_GATEWAY_TOKEN>`
+- Content type: `application/json`
+- Machine-readable contract: [`openapi.yaml`](./openapi.yaml)
+- Trace dashboard: `http://127.0.0.1:4317/dashboard`
+- Intended scope: personal, localhost-only, low-concurrency automation
 
-- Node.js 20 یا جدیدتر
-- Codex CLI
-- ورود موفق Codex با حساب ChatGPT خودتان
+The bearer token is supplied out-of-band by the operator. Never print it, commit it, put it in a URL, include it in a model prompt, or return it in an error. Do not inspect browser sessions, copy ChatGPT cookies, or ask for an OpenAI API key.
 
-ابتدا وضعیت ورود را بررسی کنید:
+### Required workflow
 
-```powershell
-codex login status
+1. Call unauthenticated `GET /health`.
+2. If healthy, call authenticated `GET /v1/models` and select a model `id`; omit `model` to use the Codex default.
+3. Construct one self-contained task with the outcome, constraints, output format, write permission, and validation requirements.
+4. Default to `mode: "read-only"`.
+5. Set `working_directory` only when repository context is needed. It must be an absolute path inside `CODEX_ALLOWED_ROOTS`.
+6. Call `POST /v1/responses`. A client timeout of 310 seconds is a reasonable default.
+7. If `output` contains `function_call` items, execute only functions from the client's fixed trusted registry. Validate arguments, append each call and `function_call_output` to the complete stateless history, resend the same tools, and repeat.
+8. Otherwise use `output_text` as the final answer. Diagnostic `events` are not the answer.
+9. Require non-empty `output_text` or a valid `function_call`; HTTP `200` alone is insufficient.
+10. Retry transient transport, `429`, `502`, `503`, or `504` failures at most twice with exponential backoff. Never retry `400`, `401`, `403`, or `413` unchanged.
+
+### Health and model discovery
+
+```http
+GET /health HTTP/1.1
+Host: 127.0.0.1:4317
 ```
 
-اگر وارد نشده‌اید:
+`/health` proves that the gateway is running, not that Codex authentication works. A real authenticated operation is required for an end-to-end check.
 
-```powershell
-codex login
+```http
+GET /v1/models HTTP/1.1
+Host: 127.0.0.1:4317
+Authorization: Bearer <LOCAL_CODEX_GATEWAY_TOKEN>
 ```
 
-## راه‌اندازی در PowerShell
-
-می‌توانید تنظیمات محلی را در فایل `.env.local` قرار دهید. این فایل به Git اضافه نمی‌شود و متغیرهای محیطیِ تنظیم‌شده در PowerShell همیشه بر آن اولویت دارند:
-
-```env
-LOCAL_CODEX_GATEWAY_TOKEN=یک-توکن-تصادفی-حداقل-۳۲-کاراکتری
-CODEX_ALLOWED_ROOTS=C:\\Users\\Dotin\\Documents\\codex-local-gateway
-CODEX_MODEL=gpt-5.6-terra
-```
-
-پس از ساخت فایل، اجرای `node src/server.mjs` آن را خودکار می‌خواند.
-
-به پوشه پروژه بروید و یک token محلی بسازید:
-
-```powershell
-$env:LOCAL_CODEX_GATEWAY_TOKEN = node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-$env:CODEX_ALLOWED_ROOTS = (Get-Location).Path
-$env:CODEX_BIN = "C:\Users\Dotin\AppData\Local\OpenAI\Codex\bin\247581e40ee272fb\codex.exe"
-$env:CODEX_HOME = "C:\Users\Dotin\.codex"
-node src/server.mjs
-```
-
-این مقدار token را فقط در همان نشست PowerShell یا secret manager نگهداری کنید؛ آن را در Git قرار ندهید.
-
-## ارسال درخواست
-
-در PowerShell دیگری همان token را در متغیر محیطی قرار دهید و اجرا کنید:
-
-```powershell
-$headers = @{ Authorization = "Bearer $env:LOCAL_CODEX_GATEWAY_TOKEN" }
-$body = @{
-  input = "این پروژه را بررسی کن و سه ریسک اصلی را توضیح بده"
-  mode = "read-only"
-  working_directory = "C:\path\to\your\project"
-} | ConvertTo-Json
-
-Invoke-RestMethod `
-  -Uri "http://127.0.0.1:4317/v1/responses" `
-  -Method Post `
-  -Headers $headers `
-  -ContentType "application/json" `
-  -Body $body
-```
-
-پاسخ اصلی در فیلد `output_text` قرار دارد.
-
-### سازگاری محدود با Responses API
-
-مسیر `POST /v1/responses` بدنه‌ای شبیه Responses API می‌پذیرد. فیلدهای پشتیبانی‌شده `model`، `input`، `instructions`، `stream`، `reasoning.effort`، `text.format`، `metadata`، `tools`، `tool_choice`، `parallel_tool_calls` و `store: false` هستند. تصویر می‌تواند data URL از نوع PNG/JPEG/WEBP/GIF یا مسیر absolute داخل `CODEX_ALLOWED_ROOTS` باشد؛ gateway تصویر اینترنتی دانلود نمی‌کند. `text.format` می‌تواند متن عادی یا `json_schema` باشد. فیلدهای محلی `mode`، `working_directory` و `include_events` نیز برقرارند. پارامترهای اجرا‌نشده، از جمله `temperature`، `previous_response_id` یا `store: true` با خطای `400` و نام پارامتر برگردانده می‌شوند؛ این گیت‌وی جایگزین کامل API رسمی OpenAI نیست.
-
-با `stream: true` پاسخ به‌صورت SSE ارسال می‌شود. جریان با رویدادهای `response.created` و `response.in_progress` شروع می‌شود. متن با `response.output_text.delta` و function call با رویدادهای `response.output_item.added`، `response.function_call_arguments.delta` و `response.function_call_arguments.done` ارسال می‌شود. جریان با `response.completed` و `[DONE]` تمام می‌شود. شناسه درخواست از header به نام `x-request-id` قابل دریافت است.
-
-### Function calling
-
-فقط ابزارهای caller-owned با `type: "function"` پشتیبانی می‌شوند. Gateway هیچ function ارسالی را اجرا نمی‌کند؛ کلاینت باید call را اجرا کند و تاریخچه کامل را در درخواست بعدی بازبفرستد. این رفتار عمداً stateless است و `previous_response_id` پشتیبانی نمی‌شود.
-
-درخواست اول:
+Example:
 
 ```json
 {
-  "input": "دمای تهران را از سرویس خصوصی من بگیر",
+  "object": "list",
+  "data": [{
+    "id": "gpt-6-astra",
+    "object": "model",
+    "created": 0,
+    "owned_by": "codex",
+    "display_name": "GPT-6-Astra",
+    "description": "...",
+    "hidden": false,
+    "is_default": true,
+    "default_reasoning_effort": "medium",
+    "supported_reasoning_efforts": [{ "effort": "medium", "description": "..." }],
+    "input_modalities": ["text", "image"],
+    "service_tiers": []
+  }]
+}
+```
+
+Hidden picker entries are excluded by default. Operator-facing clients may use `GET /v1/models?include_hidden=true`. The catalog comes from Codex app-server's `model/list` RPC and is cached for five minutes by default. It is a catalog, not an entitlement guarantee; only a completed inference verifies access for that request.
+
+### Generate a response
+
+```http
+POST /v1/responses HTTP/1.1
+Host: 127.0.0.1:4317
+Authorization: Bearer <LOCAL_CODEX_GATEWAY_TOKEN>
+Content-Type: application/json
+
+{
+  "model": "gpt-6-astra",
+  "input": "Inspect this repository without changing files. Return five architecture bullets.",
+  "working_directory": "C:\\path\\to\\repository",
+  "mode": "read-only",
+  "include_events": false
+}
+```
+
+Successful response:
+
+```json
+{
+  "id": "0d167aad-1353-4f02-94f8-2de035fa35c5",
+  "object": "response",
+  "created_at": 1790474400,
+  "status": "completed",
+  "model": "gpt-6-astra",
+  "output": [],
+  "output_text": "The final Codex response.",
+  "error": null,
+  "incomplete_details": null,
+  "queue_wait_ms": 0,
+  "execution_ms": 8421
+}
+```
+
+Supported request fields:
+
+- `input`: required string or complete stateless item history.
+- `model`: optional ID returned by `/v1/models`.
+- `instructions`: optional instructions prepended to the task.
+- `stream`: return Responses-style Server-Sent Events.
+- `reasoning.effort`: `none`, `minimal`, `low`, `medium`, `high`, or `xhigh`, subject to the model.
+- `text.format`: plain text or JSON Schema output.
+- `metadata`: up to 16 string values.
+- `store`: only `false`; runs are ephemeral.
+- `tools`, `tool_choice`, `parallel_tool_calls`: caller-owned functions.
+- `working_directory`: absolute allowed local path.
+- `mode`: `read-only` or `workspace-write`; default is read-only.
+- `include_events`: include potentially large Codex JSONL diagnostics.
+
+Images may be PNG/JPEG/WEBP/GIF data URLs or absolute paths inside `CODEX_ALLOWED_ROOTS`. The gateway never downloads image URLs. Unsupported fields such as `temperature`, `previous_response_id`, and `store: true` return `400` instead of being ignored.
+
+Use `workspace-write` only when the human explicitly requested changes, the server has `CODEX_ALLOW_WRITES=true`, the working directory is correct, and the prompt states the change and validation. Otherwise use read-only.
+
+### Function calling
+
+The gateway accepts caller-owned functions but never executes them. The client owns execution and must use a fixed allowlist.
+
+Initial request:
+
+```json
+{
+  "input": "Get Tehran's temperature using my private service.",
   "tools": [{
     "type": "function",
     "name": "lookup_temperature",
@@ -104,24 +149,14 @@ Invoke-RestMethod `
 }
 ```
 
-اگر `output` دارای آیتم `function_call` بود، کلاینت function را اجرا می‌کند. سپس پیام کاربر، همان آیتم call و خروجی ابزار را با همان `call_id` می‌فرستد:
+If a call is returned, execute the trusted function and resend the complete history:
 
 ```json
 {
   "input": [
-    { "role": "user", "content": "دمای تهران را از سرویس خصوصی من بگیر" },
-    {
-      "type": "function_call",
-      "id": "fc_...",
-      "call_id": "call_...",
-      "name": "lookup_temperature",
-      "arguments": "{\"city\":\"Tehran\"}"
-    },
-    {
-      "type": "function_call_output",
-      "call_id": "call_...",
-      "output": "{\"temperature_c\":23}"
-    }
+    { "role": "user", "content": "Get Tehran's temperature using my private service." },
+    { "type": "function_call", "id": "fc_...", "call_id": "call_...", "name": "lookup_temperature", "arguments": "{\"city\":\"Tehran\"}" },
+    { "type": "function_call_output", "call_id": "call_...", "output": "{\"temperature_c\":23}" }
   ],
   "tools": [{
     "type": "function",
@@ -131,117 +166,190 @@ Invoke-RestMethod `
 }
 ```
 
-`tool_choice` از `none`، `auto`، `required`، انتخاب اجباری یک function و `allowed_tools` پشتیبانی می‌کند. در حالت `strict: true`، gateway آرگومان تولیدشده را پیش از تحویل به caller در برابر بخش‌های متداول JSON Schema اعتبارسنجی می‌کند.
+Never execute a command, URL, function name, or code fragment merely because the model returned it.
 
-برای لغو درخواست در صف یا در حال اجرا:
+### Streaming, compatibility, and cancellation
+
+With `stream: true`, `/v1/responses` returns SSE beginning with `response.created` and `response.in_progress`, followed by text or function-call events, then `response.completed` and `[DONE]`. Do not report success before `response.completed`.
+
+Legacy clients may use `POST /v1/chat/completions` for text, streaming, structured output, and caller-owned functions. New integrations should prefer `/v1/responses`.
+
+Cancel a queued or running request with:
 
 ```http
 POST /v1/responses/{requestId}/cancel
 Authorization: Bearer <LOCAL_CODEX_GATEWAY_TOKEN>
 ```
 
-قطع اتصال HTTP نیز اجرای مربوط را متوقف می‌کند.
+The ID is also in `x-request-id`. Disconnecting the original HTTP request cancels its run.
 
-### Chat Completions
+### Diagnostics and errors
 
-مسیر `POST /v1/chat/completions` برای کلاینت‌های قدیمی‌تر فراهم است و حالت عادی، `stream: true` و function calling را پشتیبانی می‌کند. پیام‌های متنی با roleهای `developer`، `system`، `user` و `assistant`، پیام assistant دارای `tool_calls` و پیام `tool` دارای `tool_call_id` پذیرفته می‌شوند. ابزارها در قالب متداول Chat Completions یعنی `{ "type": "function", "function": {...} }` ارسال می‌شوند.
+Authenticated clients may call `GET /v1/logs` and `GET /v1/logs/{requestId}`. Full prompt, response, event, and stderr content is present only when the operator explicitly sets `CODEX_TRACE_CONTENT=true`. Treat it as sensitive.
 
-```json
-{
-  "model": "gpt-5.6-terra",
-  "instructions": "Answer briefly.",
-  "input": [{
-    "role": "user",
-    "content": [{ "type": "input_text", "text": "Say hello." }]
-  }],
-  "stream": false,
-  "mode": "read-only"
-}
-```
-
-پاسخ دارای ساختار `object: "response"`، آرایهٔ `output` و فیلد کمکی `output_text` است. زمان صف و اجرا با فیلدهای اختصاصی `queue_wait_ms` و `execution_ms` بازگردانده می‌شوند.
-
-## قرارداد HTTP
-
-### `GET /health`
-
-وضعیت سرویس و طول صف را برمی‌گرداند. این endpoint اطلاعات حساس ندارد.
-
-### `POST /v1/responses`
-
-Header:
-
-```text
-Authorization: Bearer <LOCAL_CODEX_GATEWAY_TOKEN>
-```
-
-Body:
+All errors use:
 
 ```json
 {
-  "input": "درخواست",
-  "working_directory": "C:\\path\\to\\project",
-  "mode": "read-only",
-  "include_events": false
+  "error": {
+    "message": "Human-readable explanation",
+    "type": "Error",
+    "details": {},
+    "request_id": "61dc18a1-bb6c-40c6-82f3-c91415299047"
+  }
 }
 ```
 
-- حالت پیش‌فرض `read-only` است.
-- برای فعال‌کردن تغییر فایل‌ها، ابتدا `CODEX_ALLOW_WRITES=true` تنظیم کنید و در درخواست `mode: workspace-write` بفرستید.
-- پوشه کاری باید داخل یکی از مسیرهای `CODEX_ALLOWED_ROOTS` باشد.
-- درخواست‌ها به‌صورت پیش‌فرض یکی‌یکی اجرا می‌شوند تا مصرف و تداخل کنترل شود.
-- ظرفیت صف، timeout انتظار و shutdown با `CODEX_MAX_QUEUED`، `CODEX_QUEUE_TIMEOUT_MS` و `CODEX_SHUTDOWN_TIMEOUT_MS` کنترل می‌شوند.
+Every response has `x-request-id`; record it when reporting failures.
 
-### `GET /v1/logs`
+| Status | Meaning | Client action |
+| --- | --- | --- |
+| `400` | Invalid JSON, field, path, mode, or query | Correct it; do not retry unchanged. |
+| `401` | Missing/invalid local token | Ask the operator for it out-of-band. |
+| `403` | Write mode disabled | Use read-only or ask the operator to enable writes. |
+| `404` | Unknown endpoint/request | Correct the URL or ID. |
+| `413` | Request too large | Reduce it. |
+| `429` | Queue limit/timeout | Back off and retry at most twice. |
+| `499` | Cancelled | Stop unless asked to retry. |
+| `502` | Codex execution/discovery failed | Retry only if transient. |
+| `503` | Codex could not start | Verify CLI installation and `CODEX_BIN`. |
+| `504` | Timeout | Simplify the task or raise the configured timeout. |
 
-با همان Bearer token، metadata محدود traceها و خلاصه صف را برمی‌گرداند. نگهداری پیش‌فرض ۲۴ ساعت و حداکثر ۱۰۰۰ رکورد است و با `CODEX_LOG_RETENTION_MS` و `CODEX_LOG_MAX_ENTRIES` قابل تنظیم است.
+### Minimal JavaScript client
 
-برای نگهداری metadata پس از restart، مسیر `CODEX_TRACE_FILE` را تعیین کنید. prompt، پاسخ، event و stderr هرگز در این فایل نوشته نمی‌شوند. خلاصه trace شامل نرخ موفقیت و latencyهای average، p50 و p95 است.
+```js
+const baseUrl = process.env.CODEX_GATEWAY_URL ?? "http://127.0.0.1:4317";
+const token = process.env.LOCAL_CODEX_GATEWAY_TOKEN;
+if (!token) throw new Error("LOCAL_CODEX_GATEWAY_TOKEN is required");
+const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
 
-### `GET /v1/logs/:requestId`
+const health = await fetch(`${baseUrl}/health`).then((r) => r.json());
+if (health.status !== "ok") throw new Error("Gateway is unhealthy");
 
-جزئیات یک trace را برمی‌گرداند. ذخیره prompt، پاسخ، eventها، stderr و مسیر کامل به‌صورت پیش‌فرض خاموش است. برای فعال‌سازی، سرویس را با `CODEX_TRACE_CONTENT=true` اجرا کنید. محتوا فقط در حافظه نگهداری می‌شود، با همان retention حذف می‌شود و پس از restart از بین می‌رود. Bearer token هیچ‌وقت داخل trace ذخیره نمی‌شود.
+const catalogResponse = await fetch(`${baseUrl}/v1/models`, { headers });
+if (!catalogResponse.ok) throw new Error(`Model discovery failed: ${catalogResponse.status}`);
+const models = (await catalogResponse.json()).data;
+const model = models.find((item) => item.is_default)?.id ?? models[0]?.id;
 
-## تست
+const response = await fetch(`${baseUrl}/v1/responses`, {
+  method: "POST",
+  headers,
+  body: JSON.stringify({
+    model,
+    input: "Summarize this repository in five bullets without changing files.",
+    working_directory: process.cwd(),
+    mode: "read-only"
+  }),
+  signal: AbortSignal.timeout(310_000)
+});
+const result = await response.json();
+if (!response.ok) throw new Error(`${response.status}: ${result.error?.message}`);
+if (!result.output_text && !result.output?.some((item) => item.type === "function_call")) {
+  throw new Error("Gateway returned no usable output");
+}
+console.log(result.output_text);
+```
+
+### Minimal Python client
+
+```python
+import os
+import requests
+
+base_url = os.getenv("CODEX_GATEWAY_URL", "http://127.0.0.1:4317")
+token = os.environ["LOCAL_CODEX_GATEWAY_TOKEN"]
+headers = {"Authorization": f"Bearer {token}"}
+
+health = requests.get(f"{base_url}/health", timeout=5).json()
+if health.get("status") != "ok":
+    raise RuntimeError("Gateway is unhealthy")
+
+catalog = requests.get(f"{base_url}/v1/models", headers=headers, timeout=20)
+catalog.raise_for_status()
+models = catalog.json()["data"]
+model = next((item["id"] for item in models if item["is_default"]), models[0]["id"])
+
+response = requests.post(
+    f"{base_url}/v1/responses",
+    headers=headers,
+    json={
+        "model": model,
+        "input": "Explain this repository without modifying files.",
+        "working_directory": os.getcwd(),
+        "mode": "read-only",
+    },
+    timeout=310,
+)
+response.raise_for_status()
+result = response.json()
+if not result.get("output_text") and not any(
+    item.get("type") == "function_call" for item in result.get("output", [])
+):
+    raise RuntimeError("Gateway returned no usable output")
+print(result.get("output_text", ""))
+```
+
+## Operator setup
+
+Requirements: Node.js 20+, Codex CLI, and a successful local Codex login.
+
+```powershell
+codex login status
+codex login # only when needed
+```
+
+Create a gitignored `.env.local`; process environment variables take precedence:
+
+```env
+LOCAL_CODEX_GATEWAY_TOKEN=a-random-secret-with-at-least-32-characters
+CODEX_ALLOWED_ROOTS=C:\\Users\\you\\Documents
+CODEX_MODEL=gpt-6-astra
+```
+
+Start in PowerShell:
+
+```powershell
+$env:LOCAL_CODEX_GATEWAY_TOKEN = node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+$env:CODEX_ALLOWED_ROOTS = (Get-Location).Path
+node src/server.mjs
+```
+
+Important environment variables:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `LOCAL_CODEX_GATEWAY_TOKEN` | required | Local secret, minimum 32 characters. |
+| `CODEX_ALLOWED_ROOTS` | current directory | Path-delimited allowed workspaces. |
+| `CODEX_BIN` | `codex` | Codex executable. |
+| `CODEX_HOME` | user `.codex` | Codex auth/config directory. |
+| `CODEX_MODEL` | Codex default | Optional default model. |
+| `CODEX_ALLOW_WRITES` | `false` | Permit workspace-write. |
+| `CODEX_TIMEOUT_MS` | `300000` | Task timeout. |
+| `CODEX_MODELS_TIMEOUT_MS` | `15000` | Model discovery timeout. |
+| `CODEX_MODELS_CACHE_MS` | `300000` | Catalog cache; `0` disables it. |
+| `CODEX_CONCURRENCY` | `1` | Parallel runs, maximum 4. |
+| `CODEX_MAX_QUEUED` | `32` | Queue capacity. |
+| `CODEX_QUEUE_TIMEOUT_MS` | `60000` | Maximum queue wait. |
+| `CODEX_TRACE_CONTENT` | `false` | Temporarily retain sensitive trace content. |
+| `CODEX_TRACE_FILE` | disabled | Persist non-sensitive trace metadata. |
+
+Keep the gateway bound to `127.0.0.1`. Never expose it directly to the internet or let untrusted callers choose arbitrary working directories.
+
+### Test and utilities
 
 ```powershell
 node --test
+node scripts/smoke-tool-calling.mjs # authenticated end-to-end smoke test
 ```
 
-برای تست واقعی دو مرحله‌ای با Codex CLI احراز‌شده و بدون اجرای ابزار خارجی واقعی:
+Windows startup:
 
 ```powershell
-node scripts/smoke-tool-calling.mjs
+.\scripts\install-windows-startup.ps1
+.\scripts\uninstall-windows-startup.ps1
 ```
 
-برای اجرای نمونه PowerShell که function call را دریافت می‌کند و ابزار `get_weather` را با API عمومی Open-Meteo اجرا می‌کند:
-
-```powershell
-$env:LOCAL_CODEX_GATEWAY_TOKEN = "توکن-gateway"
-.\scripts\example-tool-calling.ps1
-```
-
-متن درخواست، URL gateway و مدل اختیاری‌اند:
-
-```powershell
-.\scripts\example-tool-calling.ps1 `
-  -Prompt "هوای پاریس الان چطور است؟" `
-  -GatewayUrl "http://127.0.0.1:4317" `
-  -Model "gpt-5.6-terra"
-```
-
-نمونه‌ی کدنویسی، ابزار `read_selected_source` را در اختیار Codex می‌گذارد و فقط همان فایلی را می‌خواند که اپراتور انتخاب کرده است:
-
-```powershell
-$env:LOCAL_CODEX_GATEWAY_TOKEN = "توکن-gateway"
-.\scripts\example-code-tool-calling.ps1 `
-  -FilePath ".\fixtures\sample-buggy.js" `
-  -Prompt "کد را review کن و باگ‌های مهم را با راه‌حل توضیح بده"
-```
-
-## اجرای Docker
-
-فایل‌های `Dockerfile` و `docker-compose.yml` آماده‌اند. ورود Codex و workspace به container mount می‌شوند و پورت فقط روی localhost منتشر می‌شود:
+Docker:
 
 ```powershell
 $env:CODEX_WORKSPACE = (Get-Location).Path
@@ -249,31 +357,14 @@ $env:CODEX_HOST_HOME = "$env:USERPROFILE\.codex"
 docker compose up --build -d
 ```
 
-نسخه Codex CLI را برای محیط‌های پایدار با `CODEX_VERSION` pin کنید. فایل `.env.local` وارد image نمی‌شود، ولی Compose آن را هنگام اجرا می‌خواند.
+Pin `CODEX_VERSION` for stable deployments.
 
-## اجرای خودکار در ویندوز
+## Operational limitations
 
-برای ساخت startup task مخصوص کاربر فعلی:
-
-```powershell
-.\scripts\install-windows-startup.ps1
-```
-
-این task هنگام ورود کاربر gateway را در پنجره مخفی اجرا می‌کند. برای حذف آن:
-
-```powershell
-.\scripts\uninstall-windows-startup.ps1
-```
-
-اسکریپت نصب فقط با اجرای صریح اپراتور سیستم را تغییر می‌دهد.
-
-## محدودیت‌های آگاهانه
-
-- سرویس فقط روی `127.0.0.1` گوش می‌دهد؛ آن را مستقیماً روی اینترنت منتشر نکنید.
-- متن میانی وابسته به eventهای Codex CLI است؛ بعضی نسخه‌ها ممکن است متن را در یک delta نهایی بفرستند.
-- هر فراخوانی یک اجرای ephemeral جدید است و حافظه مکالمه ندارد.
-- function calling با orchestration ساختاریافته روی Codex CLI پیاده شده است؛ functionهای caller داخل gateway یا Codex اجرا نمی‌شوند.
-- برای ادامه tool call باید تاریخچه کامل همراه `function_call` و `function_call_output` دوباره ارسال شود؛ `previous_response_id` وجود ندارد.
-- محدودیت مصرف و دسترسی مدل تابع حساب Codex شماست.
-- این gateway برای استفاده شخصی و کم‌هم‌زمانی طراحی شده است.
-- فعال‌سازی `CODEX_TRACE_CONTENT` می‌تواند secretهای موجود در prompt یا خروجی را موقتاً در حافظه نگه دارد؛ retention را کوتاه و دسترسی به دستگاه را محدود نگه دارید.
+- Each request is ephemeral; conversation memory is not retained.
+- Function-call continuation requires resending the complete history.
+- This is a documented subset of Responses and Chat Completions, not a complete OpenAI API replacement.
+- Model availability and usage limits belong to the authenticated Codex account.
+- The catalog may be cached or bundled by Codex and does not guarantee entitlement.
+- Intermediate streaming behavior can vary by Codex CLI version.
+- Trace content may contain prompt/output secrets; keep retention short and protect the machine.

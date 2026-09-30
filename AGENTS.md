@@ -18,13 +18,16 @@ The bearer token is supplied out-of-band by the human operator. Never print it, 
 ## Agent workflow
 
 1. Call `GET /health`.
-2. If `status` is `ok`, prepare one self-contained task in `input`.
-3. Default to `mode: "read-only"`.
-4. Set `working_directory` only when the task needs repository context. It must be inside a configured `CODEX_ALLOWED_ROOTS` directory.
-5. Call `POST /v1/responses` and wait for completion.
-6. If `output` contains `function_call` items, execute only functions from your own trusted registry, append every call and its `function_call_output` to the complete input history, resend the same tool definitions, and repeat.
-7. Otherwise read the final answer from `output_text`.
-8. On a retryable error, retry at most twice with exponential backoff. Never retry authentication, validation, or policy errors without changing the request.
+2. Call authenticated `GET /v1/models` and select a model `id`, or omit `model` to use the Codex default.
+3. If `status` is `ok`, prepare one self-contained task in `input`.
+4. Default to `mode: "read-only"`.
+5. Set `working_directory` only when the task needs repository context. It must be inside a configured `CODEX_ALLOWED_ROOTS` directory.
+6. Call `POST /v1/responses` and wait for completion.
+7. If `output` contains `function_call` items, execute only functions from your own trusted registry, append every call and its `function_call_output` to the complete input history, resend the same tool definitions, and repeat.
+8. Otherwise read the final answer from `output_text`.
+9. On a retryable error, retry at most twice with exponential backoff. Never retry authentication, validation, or policy errors without changing the request.
+
+`GET /v1/models` returns an OpenAI-style `{ "object": "list", "data": [...] }` envelope. Each model has an `id`, display metadata, supported reasoning efforts and input modalities. Hidden picker entries are excluded unless `?include_hidden=true` is supplied. This catalog may be cached and is not proof of entitlement; only a successfully completed task verifies access to the selected model for that request.
 
 For diagnostics, an authenticated agent may call `GET /v1/logs`, then `GET /v1/logs/{requestId}` for one trace. Full content is returned only when the operator explicitly starts the gateway with `CODEX_TRACE_CONTENT=true`. The bearer token is never retained.
 

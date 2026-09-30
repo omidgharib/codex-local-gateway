@@ -65,6 +65,31 @@ paths:
           $ref: "#/components/responses/ErrorResponse"
         "504":
           $ref: "#/components/responses/ErrorResponse"
+  /v1/models:
+    get:
+      operationId: listCodexModels
+      summary: List models advertised by the authenticated Codex session
+      description: The catalog may be cached and is not an entitlement guarantee; a completed inference verifies access for a specific request.
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: include_hidden
+          required: false
+          schema: { type: boolean, default: false }
+          description: Include models hidden from the normal Codex model picker.
+      responses:
+        "200":
+          description: Codex model catalog
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelList"
+        "400": { $ref: "#/components/responses/ErrorResponse" }
+        "401": { $ref: "#/components/responses/ErrorResponse" }
+        "502": { $ref: "#/components/responses/ErrorResponse" }
+        "503": { $ref: "#/components/responses/ErrorResponse" }
+        "504": { $ref: "#/components/responses/ErrorResponse" }
   /v1/responses/{requestId}/cancel:
     post:
       operationId: cancelCodexTask
@@ -164,6 +189,50 @@ components:
       scheme: bearer
       bearerFormat: opaque-local-token
   schemas:
+    ModelList:
+      type: object
+      additionalProperties: false
+      required: [object, data]
+      properties:
+        object: { type: string, const: list }
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Model"
+    Model:
+      type: object
+      additionalProperties: false
+      required: [id, object, created, owned_by, display_name, description, hidden, is_default, default_reasoning_effort, supported_reasoning_efforts, input_modalities, service_tiers]
+      properties:
+        id: { type: string }
+        object: { type: string, const: model }
+        created: { type: integer, const: 0 }
+        owned_by: { type: string, const: codex }
+        display_name: { type: string }
+        description: { type: string }
+        hidden: { type: boolean }
+        is_default: { type: boolean }
+        default_reasoning_effort: { type: string }
+        supported_reasoning_efforts:
+          type: array
+          items:
+            type: object
+            required: [effort, description]
+            properties:
+              effort: { type: string }
+              description: { type: string }
+        input_modalities:
+          type: array
+          items: { type: string, enum: [text, image, audio] }
+        service_tiers:
+          type: array
+          items:
+            type: object
+            required: [id, name, description]
+            properties:
+              id: { type: string }
+              name: { type: string }
+              description: { type: string }
     QueueStats:
       type: object
       additionalProperties: false

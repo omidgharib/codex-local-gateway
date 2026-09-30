@@ -7,6 +7,7 @@ import { WorkQueue } from "./queue.mjs";
 import { httpError, runCodex } from "./codex.mjs";
 import { TraceStore } from "./trace-store.mjs";
 import { loadLocalEnv } from "./local-env.mjs";
+import { listModels } from "./models.mjs";
 import { eventTextDelta, normalizeResponseRequest, resolveToolDecision, responseEnvelope, streamEvents } from "./responses-compat.mjs";
 import { chatChunk, chatEnvelope, normalizeChatRequest } from "./chat-compat.mjs";
 
@@ -45,6 +46,19 @@ const server = http.createServer(async (request, response) => {
       return json(response, 200, { status: "ok", queue: queue.stats });
     }
     authenticate(request, config.token);
+    if (request.method === "GET" && request.url?.startsWith("/v1/models")) {
+      const url = new URL(request.url, `http://${config.host}:${config.port}`);
+      if (url.pathname !== "/v1/models") throw httpError(404, "Not found");
+      const allowedParams = new Set(["include_hidden"]);
+      for (const name of url.searchParams.keys()) {
+        if (!allowedParams.has(name)) throw httpError(400, `Unsupported query parameter: ${name}`, { parameter: name });
+      }
+      const rawIncludeHidden = url.searchParams.get("include_hidden");
+      if (rawIncludeHidden !== null && !["true", "false"].includes(rawIncludeHidden)) {
+        throw httpError(400, "include_hidden must be true or false", { parameter: "include_hidden" });
+      }
+      return json(response, 200, await listModels(config, { includeHidden: rawIncludeHidden === "true" }));
+    }
     const cancelMatch = request.method === "POST" && request.url?.match(/^\/v1\/responses\/([0-9a-f-]+)\/cancel$/i);
     if (cancelMatch) {
       const controller = activeRequests.get(cancelMatch[1]);
