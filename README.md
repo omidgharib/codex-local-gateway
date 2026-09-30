@@ -174,6 +174,8 @@ With `stream: true`, `/v1/responses` returns SSE beginning with `response.create
 
 Legacy clients may use `POST /v1/chat/completions` for text, streaming, structured output, and caller-owned functions. New integrations should prefer `/v1/responses`.
 
+For compatibility with clients such as OpenCode, Chat Completions also accepts `max_tokens` and `stream_options.include_usage`. Usage is emitted as a final SSE chunk when requested. `max_tokens` is validated but remains advisory because Codex CLI does not expose an exact output-token limit.
+
 Cancel a queued or running request with:
 
 ```http
@@ -186,6 +188,8 @@ The ID is also in `x-request-id`. Disconnecting the original HTTP request cancel
 ### Diagnostics and errors
 
 Authenticated clients may call `GET /v1/logs` and `GET /v1/logs/{requestId}`. Full prompt, response, event, and stderr content is present only when the operator explicitly sets `CODEX_TRACE_CONTENT=true`. Treat it as sensitive.
+
+The dashboard separates captured request parameters, the final API response envelope, errors, and Codex diagnostics into dedicated tabs. After changing `CODEX_TRACE_CONTENT`, restart the gateway; content is captured only for new requests and remains memory-only.
 
 All errors use:
 

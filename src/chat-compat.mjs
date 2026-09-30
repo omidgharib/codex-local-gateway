@@ -4,6 +4,7 @@ import { normalizeResponseRequest } from "./responses-compat.mjs";
 const supportedFields = new Set([
   "model", "messages", "stream", "reasoning_effort", "response_format", "metadata", "store",
   "tools", "tool_choice", "parallel_tool_calls",
+  "max_tokens", "stream_options",
   "mode", "working_directory", "include_events",
 ]);
 
@@ -17,8 +18,10 @@ export function normalizeChatRequest(body, defaultModel) {
   if (!Array.isArray(body.messages) || body.messages.length === 0) {
     throw httpError(400, "messages must be a non-empty array", { parameter: "messages" });
   }
+  const maxTokens = normalizeMaxTokens(body.max_tokens);
+  const streamOptions = normalizeStreamOptions(body.stream_options, body.stream);
   const input = body.messages.flatMap((message, index) => normalizeMessage(message, index));
-  return normalizeResponseRequest({
+  const normalized = normalizeResponseRequest({
     input,
     model: body.model,
     stream: body.stream,
@@ -33,6 +36,38 @@ export function normalizeChatRequest(body, defaultModel) {
     working_directory: body.working_directory,
     include_events: body.include_events,
   }, defaultModel);
+  return { ...normalized, maxTokens, streamOptions };
+}
+
+function normalizeMaxTokens(value) {
+  if (value === undefined) return null;
+  if (!Number.isInteger(value) || value < 1) {
+    throw httpError(400, "max_tokens must be a positive integer", { parameter: "max_tokens" });
+  }
+  // Codex CLI does not currently expose an exact output-token cap. Keep this
+  // compatibility field so OpenAI Chat Completions clients can interoperate.
+  return value;
+}
+
+function normalizeStreamOptions(value, stream) {
+  if (value === undefined) return { include_usage: false };
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw httpError(400, "stream_options must be an object", { parameter: "stream_options" });
+  }
+  const unsupported = Object.keys(value).filter((key) => key !== "include_usage");
+  if (unsupported.length) {
+    throw httpError(400, `Unsupported stream_options parameter${unsupported.length > 1 ? "s" : ""}: ${unsupported.join(", ")}`, {
+      parameter: "stream_options",
+      unsupported_parameters: unsupported,
+    });
+  }
+  if (value.include_usage !== undefined && typeof value.include_usage !== "boolean") {
+    throw httpError(400, "stream_options.include_usage must be a boolean", { parameter: "stream_options.include_usage" });
+  }
+  if (stream !== true) {
+    throw httpError(400, "stream_options requires stream to be true", { parameter: "stream_options" });
+  }
+  return { include_usage: value.include_usage === true };
 }
 
 function normalizeMessage(message, index) {
@@ -139,5 +174,20 @@ export function chatChunk({ id, createdAt, model, delta, finishReason = null }) 
     created: Math.floor(createdAt / 1000),
     model: model || "codex-default",
     choices: [{ index: 0, delta, logprobs: null, finish_reason: finishReason }],
+  };
+}
+
+export function chatUsageChunk({ id, createdAt, model, usage }) {
+  return {
+    id: `chatcmpl-${id.replaceAll("-", "")}`,
+    object: "chat.completion.chunk",
+    created: Math.floor(createdAt / 1000),
+    model: model || "codex-default",
+    choices: [],
+    usage: usage ? {
+      prompt_tokens: usage.input_tokens,
+      completion_tokens: usage.output_tokens,
+      total_tokens: usage.total_tokens,
+    } : null,
   };
 }

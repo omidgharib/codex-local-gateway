@@ -44,7 +44,16 @@ export class TraceStore {
       return;
     }
     item.output_chars = result.outputText.length;
-    if (item.detail) item.detail.response = { output_text: result.outputText, events: result.events, stderr: result.stderr };
+    if (item.detail) {
+      item.detail.response = { output_text: result.outputText };
+      item.detail.diagnostics = { events: result.events, stderr: result.stderr };
+    }
+    this.#persist();
+  }
+
+  setResponse(item, response) {
+    if (!item.detail) return;
+    item.detail.response = structuredClone(response);
     this.#persist();
   }
 

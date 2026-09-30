@@ -45,12 +45,28 @@
     .queued { background: #4a2c0a; color: #fcd34d; }
     .empty { text-align: center; color: #95a3bd; padding: 48px; }
     #notice { min-height: 22px; margin: 12px 0; color: #fca5a5; }
-    #details { width: min(900px, calc(100% - 32px)); max-height: min(760px, calc(100vh - 48px)); margin: auto; padding: 18px; color: inherit; background: #11182b; border: 1px solid #3b82f6; border-radius: 16px; box-shadow: 0 24px 90px rgba(0, 0, 0, .6); }
+    #details { width: min(1080px, calc(100% - 32px)); height: min(820px, calc(100vh - 48px)); margin: auto; padding: 0; color: inherit; background: #11182b; border: 1px solid #3b82f6; border-radius: 16px; box-shadow: 0 24px 90px rgba(0, 0, 0, .6); overflow: hidden; }
     #details::backdrop { background: rgba(2, 6, 23, .76); backdrop-filter: blur(3px); }
-    .details-header { display: flex; gap: 12px; justify-content: space-between; align-items: center; flex-wrap: wrap; }
+    .details-shell { display: flex; flex-direction: column; height: 100%; }
+    .details-header { display: flex; gap: 12px; justify-content: space-between; align-items: center; flex-wrap: wrap; padding: 18px 20px; border-bottom: 1px solid #24314a; }
     .details-header h2 { margin: 0; font-size: 18px; }
-    #detail-content { direction: ltr; text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 440px; overflow: auto; margin: 14px 0 0; padding: 14px; border-radius: 10px; background: #0b1020; color: #cbd5e1; }
-    @media (max-width: 820px) { .cards { grid-template-columns: repeat(2, 1fr); } .panel { overflow-x: auto; } }
+    .details-actions { display: flex; gap: 8px; }
+    .details-actions button { min-height: 44px; }
+    .details-body { display: flex; flex-direction: column; min-height: 0; flex: 1; padding: 18px 20px 20px; }
+    .detail-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 16px; direction: ltr; }
+    .detail-field { min-width: 0; padding: 10px 12px; border: 1px solid #24314a; border-radius: 10px; background: #0d1425; }
+    .detail-field dt { color: #95a3bd; font-size: 12px; margin-bottom: 4px; }
+    .detail-field dd { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .detail-warning { margin: 0 0 16px; padding: 12px 14px; border: 1px solid #854d0e; border-radius: 10px; background: #422006; color: #fde68a; line-height: 1.7; }
+    .tabs { display: flex; gap: 6px; overflow-x: auto; border-bottom: 1px solid #24314a; direction: ltr; }
+    .tab { min-height: 44px; padding: 9px 14px; border: 0; border-bottom: 2px solid transparent; border-radius: 8px 8px 0 0; background: transparent; color: #9eacc4; white-space: nowrap; }
+    .tab[aria-selected="true"] { color: #eff6ff; border-bottom-color: #60a5fa; background: #17243a; }
+    .tab-panel { min-height: 0; flex: 1; overflow: auto; margin-top: 12px; }
+    .tab-panel[hidden] { display: none; }
+    .json-view { direction: ltr; text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; min-height: 100%; margin: 0; padding: 16px; border-radius: 10px; background: #080d19; color: #d5deec; font: 13px/1.65 ui-monospace, SFMono-Regular, Consolas, monospace; tab-size: 2; }
+    .empty-detail { display: grid; place-items: center; min-height: 220px; padding: 28px; border: 1px dashed #334155; border-radius: 10px; color: #95a3bd; text-align: center; line-height: 1.8; }
+    @media (max-width: 820px) { .cards { grid-template-columns: repeat(2, 1fr); } .panel { overflow-x: auto; } .detail-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (max-width: 520px) { #details { width: 100%; height: 100%; max-height: none; border-radius: 0; } .detail-summary { grid-template-columns: 1fr; } .details-header, .details-body { padding-inline: 14px; } }
   </style>
 </head>
 <body>
@@ -58,7 +74,7 @@
     <header>
       <div>
         <h1>داشبورد Codex Gateway</h1>
-        <div class="muted">Trace درخواست‌ها بدون ذخیره prompt، پاسخ یا token</div>
+        <div class="muted">مشاهده وضعیت، پارامترها، پاسخ و اطلاعات تشخیصی درخواست‌ها</div>
       </div>
       <form class="auth" id="auth-form">
         <input id="token" type="password" autocomplete="off" placeholder="LOCAL_CODEX_GATEWAY_TOKEN" aria-label="Gateway token">
@@ -91,16 +107,23 @@
         <tbody id="rows"><tr><td class="empty" colspan="9">برای مشاهده traceها token را وارد کنید.</td></tr></tbody>
       </table>
     </section>
-    <dialog id="details">
-      <div class="details-header">
-        <h2>جزئیات درخواست</h2>
-        <button class="secondary" id="close-details" type="button">بستن</button>
+    <dialog id="details" aria-labelledby="detail-title">
+      <div class="details-shell">
+        <div class="details-header">
+          <h2 id="detail-title">جزئیات درخواست</h2>
+          <div class="details-actions">
+            <button class="secondary" id="copy-details" type="button">کپی بخش فعال</button>
+            <button class="secondary" id="close-details" type="button">بستن</button>
+          </div>
+        </div>
+        <div class="details-body" id="detail-content" aria-live="polite">
+          <div class="empty-detail">در حال دریافت جزئیات…</div>
+        </div>
       </div>
-      <pre id="detail-content"></pre>
     </dialog>
   </main>
   <script>
-    const state = { token: sessionStorage.getItem("gateway-token") || "", traces: [], selectedId: null };
+    const state = { token: sessionStorage.getItem("gateway-token") || "", traces: [], selectedId: null, activeTab: "request", activeDetail: null };
     const $ = (id) => document.getElementById(id);
     $("token").value = state.token;
 
@@ -125,6 +148,20 @@
       showDetails(row.dataset.requestId);
     });
     $("close-details").addEventListener("click", hideDetails);
+    $("copy-details").addEventListener("click", copyActiveDetails);
+    $("detail-content").addEventListener("click", (event) => {
+      const tab = event.target.closest("[role=tab]");
+      if (tab) activateTab(tab.dataset.tab);
+    });
+    $("detail-content").addEventListener("keydown", (event) => {
+      const tab = event.target.closest("[role=tab]");
+      if (!tab || !["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+      const tabs = [...$("detail-content").querySelectorAll("[role=tab]")];
+      const offset = event.key === "ArrowRight" ? 1 : -1;
+      const next = tabs[(tabs.indexOf(tab) + offset + tabs.length) % tabs.length];
+      next.focus();
+      activateTab(next.dataset.tab);
+    });
 
     async function refresh() {
       if (!state.token) return showError("Token محلی را وارد کنید.");
@@ -138,7 +175,7 @@
         $("failed").textContent = body.summary.failed;
         $("running").textContent = body.summary.running;
         $("queued").textContent = body.summary.queue.queued;
-        $("policy").textContent = `Retention: ${formatDuration(body.summary.retention_ms)} · Max: ${body.summary.max_entries}`;
+        $("policy").textContent = `${body.summary.content_capture_enabled ? "ثبت محتوای کامل: فعال" : "ثبت محتوای کامل: غیرفعال"} · Retention: ${formatDuration(body.summary.retention_ms)} · Max: ${body.summary.max_entries}`;
         showError("");
         renderRows();
       } catch (error) { showError(error.message); }
@@ -168,25 +205,86 @@
     async function showDetails(requestId) {
       if (!state.token) return showError("Token محلی را وارد کنید.");
       state.selectedId = requestId;
+      state.activeTab = "request";
+      state.activeDetail = null;
       renderRows();
       if (!$("details").open) $("details").showModal();
-      $("detail-content").textContent = "در حال دریافت جزئیات…";
+      $("detail-content").innerHTML = '<div class="empty-detail">در حال دریافت جزئیات…</div>';
       try {
         const response = await fetch(`/v1/logs/${encodeURIComponent(requestId)}`, { headers: { authorization: `Bearer ${state.token}` } });
         const body = await response.json();
         if (!response.ok) throw new Error(body.error?.message || `HTTP ${response.status}`);
-        $("detail-content").textContent = JSON.stringify(body.data, null, 2);
+        state.activeDetail = body.data;
+        renderDetails(body.data);
         showError("");
       } catch (error) {
-        $("detail-content").textContent = "جزئیات قابل دریافت نیست.";
+        $("detail-content").innerHTML = '<div class="empty-detail">جزئیات قابل دریافت نیست.</div>';
         showError(error.message);
       }
     }
 
     function hideDetails() {
       state.selectedId = null;
+      state.activeDetail = null;
       $("details").close();
       renderRows();
+    }
+
+    function renderDetails(trace) {
+      const detail = trace.detail || {};
+      const sections = [
+        ["request", "Request", detail.request],
+        ["response", "Response", detail.response],
+        ["error", "Error", detail.error],
+        ["diagnostics", "Events & stderr", detail.diagnostics],
+        ["raw", "Raw trace", trace],
+      ].filter(([key, , value]) => key === "raw" || value !== undefined);
+      if (!sections.some(([key]) => key === state.activeTab)) state.activeTab = sections[0][0];
+      const warning = trace.details_available ? "" : `
+        <p class="detail-warning">ثبت محتوای کامل غیرفعال بوده است. برای دیدن پارامترها و پاسخ، <code>CODEX_TRACE_CONTENT=true</code> را تنظیم و Gateway را دوباره اجرا کنید. این تنظیم فقط روی درخواست‌های جدید اثر دارد.</p>`;
+      $("detail-content").innerHTML = `
+        <dl class="detail-summary">
+          ${detailField("Request ID", trace.id)}
+          ${detailField("Status", trace.status)}
+          ${detailField("Endpoint", trace.endpoint || "—")}
+          ${detailField("Model", trace.model || "—")}
+          ${detailField("Mode", trace.mode || "—")}
+          ${detailField("Workspace", trace.workspace || "—")}
+          ${detailField("Queue wait", formatMs(trace.queue_wait_ms))}
+          ${detailField("Execution", formatMs(trace.execution_ms))}
+        </dl>
+        ${warning}
+        <div class="tabs" role="tablist" aria-label="بخش‌های جزئیات درخواست">
+          ${sections.map(([key, label]) => `<button class="tab" type="button" role="tab" id="tab-${key}" data-tab="${key}" aria-controls="panel-${key}" aria-selected="${key === state.activeTab}">${label}</button>`).join("")}
+        </div>
+        ${sections.map(([key, , value]) => `
+          <section class="tab-panel" role="tabpanel" id="panel-${key}" aria-labelledby="tab-${key}" data-panel="${key}" ${key === state.activeTab ? "" : "hidden"}>
+            <pre class="json-view">${escapeHtml(JSON.stringify(value, null, 2))}</pre>
+          </section>`).join("")}`;
+    }
+
+    function detailField(label, value) {
+      return `<div class="detail-field"><dt>${escapeHtml(label)}</dt><dd title="${escapeHtml(value)}">${escapeHtml(value)}</dd></div>`;
+    }
+
+    function activateTab(tabName) {
+      state.activeTab = tabName;
+      for (const tab of $("detail-content").querySelectorAll("[role=tab]")) tab.setAttribute("aria-selected", String(tab.dataset.tab === tabName));
+      for (const panel of $("detail-content").querySelectorAll("[role=tabpanel]")) panel.hidden = panel.dataset.panel !== tabName;
+    }
+
+    async function copyActiveDetails() {
+      const panel = $("detail-content").querySelector(`[data-panel="${state.activeTab}"] .json-view`);
+      if (!panel) return;
+      const button = $("copy-details");
+      try {
+        await navigator.clipboard.writeText(panel.textContent);
+        button.textContent = "کپی شد";
+      } catch {
+        showError("کپی خودکار ممکن نبود؛ متن را دستی انتخاب کنید.");
+      } finally {
+        setTimeout(() => { button.textContent = "کپی بخش فعال"; }, 1400);
+      }
     }
 
     function formatMs(value) { return Number.isFinite(value) ? `${value} ms` : "—"; }

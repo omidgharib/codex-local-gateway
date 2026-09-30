@@ -424,6 +424,15 @@ components:
             type: object
             description: Text message, assistant tool-call message, or tool result message.
         stream: { type: boolean, default: false }
+        max_tokens:
+          type: integer
+          minimum: 1
+          description: Accepted for Chat Completions client compatibility; the Codex CLI does not enforce an exact output-token cap.
+        stream_options:
+          type: object
+          additionalProperties: false
+          properties:
+            include_usage: { type: boolean, default: false }
         reasoning_effort: { type: string, enum: [none, minimal, low, medium, high, xhigh] }
         response_format: { type: object }
         metadata: { type: object, additionalProperties: { type: string }, maxProperties: 16 }
@@ -481,6 +490,11 @@ components:
                 request: { type: object, additionalProperties: true }
                 response: { type: object, additionalProperties: true }
                 error: { type: object, additionalProperties: true }
+                diagnostics:
+                  type: object
+                  properties:
+                    events: { type: array, items: {} }
+                    stderr: { type: string }
     TraceSummary:
       type: object
       required: [total_retained, completed, failed, running, queue, retention_ms, max_entries, content_capture_enabled]

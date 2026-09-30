@@ -49,6 +49,23 @@ test("persists public trace metadata and restores it", () => {
   }
 });
 
+test("captures the request, API response, and diagnostics only when enabled", () => {
+  const store = new TraceStore({ retentionMs: 60_000, maxEntries: 10, captureContent: true });
+  const request = { method: "POST", endpoint: "/v1/chat/completions", parameters: { messages: [{ role: "user", content: "hello" }] } };
+  const trace = store.create({ id: "captured", mode: "read-only", input_chars: 5 }, request);
+  store.markRunning(trace);
+  store.markCompleted(trace, { outputText: "hello back", events: [{ type: "done" }], stderr: "warning" });
+  const response = { id: "captured", object: "chat.completion", choices: [{ message: { content: "hello back" } }] };
+  store.setResponse(trace, response);
+
+  assert.deepEqual(store.get("captured").detail, {
+    request,
+    response,
+    diagnostics: { events: [{ type: "done" }], stderr: "warning" },
+  });
+  assert.equal(store.get("captured").details_available, true);
+});
+
 test("prunes expired entries and enforces the maximum", () => {
   let now = 1_000_000;
   const store = new TraceStore({ retentionMs: 1_000, maxEntries: 2, now: () => now });
