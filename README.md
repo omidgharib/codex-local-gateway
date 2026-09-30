@@ -1,8 +1,14 @@
 # Codex Local Gateway
 
+**نصب و راه‌اندازی:** [راهنمای مرحله‌به‌مرحله فارسی](./docs/INSTALL.fa.md) — پیش‌نیازها، نصب Codex، تنظیم توکن، اجرای سرویس، تست روی داشبورد اصلی، رفع خطا و اجرای خودکار.
+
 A localhost-only HTTP gateway that lets an authorized client run tasks through the human operator's authenticated Codex CLI session. It uses the official Codex login—not an OpenAI API key, browser cookies, or browser automation.
 
 This README is a complete integration guide. An AI agent receiving only this file should follow the contract below.
+
+## Integrate into your project with an AI agent
+
+Give [`INTEGRATION_PROMPT.md`](./INTEGRATION_PROMPT.md) to your project's coding agent for a ready-to-use integration task covering credentials, requests, function tools, error handling, and live validation. Make [`openapi.yaml`](./openapi.yaml) available alongside it for exact API schemas. Run the gateway locally first and supply the bearer token separately through the client's environment; each user needs their own local instance.
 
 ## AI client contract
 
