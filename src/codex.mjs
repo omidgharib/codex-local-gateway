@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { resolveCodexCommand } from "./codex-command.mjs";
 
 export async function runCodex({ prompt, workingDirectory, mode, model, reasoningEffort, outputSchema, inputImages = [], signal, onEvent }, config) {
   const tempDirectory = await mkdtemp(path.join(tmpdir(), "codex-gateway-"));
@@ -39,7 +40,8 @@ export async function runCodex({ prompt, workingDirectory, mode, model, reasonin
   args.push("-");
 
   try {
-    const execution = await spawnCodex(config.codexBin, [...config.codexBinArgs, ...args], prompt, config.timeoutMs, config.codexHome, signal, onEvent);
+    const resolved = await resolveCodexCommand(config);
+    const execution = await spawnCodex(resolved.command, [...resolved.args, ...args], prompt, config.timeoutMs, config.codexHome, signal, onEvent);
     const outputText = await readFile(outputFile, "utf8").catch(() => "");
     if (execution.exitCode !== 0) {
       throw httpError(502, "Codex execution failed", {
