@@ -225,6 +225,10 @@ Every response has `x-request-id`; record it when reporting failures.
 | `503` | Codex could not start | Verify CLI installation and `CODEX_BIN`. |
 | `504` | Timeout | Simplify the task or raise the configured timeout. |
 
+For `502`, inspect `error.details.stderr`. `Access is denied` or `attempt to write a readonly database` during Codex initialization means the gateway process cannot write to `CODEX_HOME`. Codex needs to update its internal state database and temporary files even when the requested task uses `mode: "read-only"`. Stop the affected gateway and restart it from a normal user PowerShell outside the agent sandbox, using the same port and configuration. Administrator access is not normally required. Verify authenticated `/v1/models` and a real `/v1/responses` request with non-empty `output_text` after restarting; `/health` and `codex login status` alone do not verify execution.
+
+If `/health` returns an HTML application page instead of JSON with `status: "ok"`, check the destination port. The application and gateway must use separate ports. For example, when an application occupies `4317`, run the gateway with `PORT=14317` and configure the application's server-side gateway URL as `http://127.0.0.1:14317`. Keep the bearer token on the server side.
+
 ### Minimal JavaScript client
 
 ```js
@@ -318,6 +322,8 @@ CODEX_MODEL=gpt-6-astra
 
 Start in PowerShell:
 
+Use a normal user terminal outside the agent sandbox so the gateway's Codex child process can write its internal state under `CODEX_HOME`.
+
 ```powershell
 $env:LOCAL_CODEX_GATEWAY_TOKEN = node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 $env:CODEX_ALLOWED_ROOTS = (Get-Location).Path
@@ -330,7 +336,7 @@ Important environment variables:
 | --- | --- | --- |
 | `LOCAL_CODEX_GATEWAY_TOKEN` | required | Local secret, minimum 32 characters. |
 | `CODEX_ALLOWED_ROOTS` | current directory | Path-delimited allowed workspaces. |
-| `CODEX_BIN` | `codex` | Codex executable. |
+| `CODEX_BIN` | `codex` | Automatic Windows desktop discovery, then PATH fallback. An explicit path overrides discovery. |
 | `CODEX_HOME` | user `.codex` | Codex auth/config directory. |
 | `CODEX_MODEL` | Codex default | Optional default model. |
 | `CODEX_ALLOW_WRITES` | `false` | Permit workspace-write. |
