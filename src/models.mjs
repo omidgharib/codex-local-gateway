@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { httpError } from "./codex.mjs";
+import { resolveCodexCommand } from "./codex-command.mjs";
 
 let cachedCatalog = null;
 let refreshPromise = null;
@@ -24,7 +25,7 @@ export function clearModelsCache() {
 }
 
 async function fetchModelCatalog(config) {
-  const client = startAppServer(config);
+  const client = startAppServer(config, await resolveCodexCommand(config));
   try {
     await client.request("initialize", {
       clientInfo: {
@@ -49,8 +50,8 @@ async function fetchModelCatalog(config) {
   }
 }
 
-function startAppServer(config) {
-  const child = spawn(config.codexBin, [...config.codexBinArgs, "app-server", "--listen", "stdio://"], {
+function startAppServer(config, resolved) {
+  const child = spawn(resolved.command, [...resolved.args, "app-server", "--listen", "stdio://"], {
     windowsHide: true,
     stdio: ["pipe", "pipe", "pipe"],
     env: {
