@@ -2,7 +2,7 @@
 
 ## نصب با یک دستور در ویندوز
 
-در PowerShell معمولی (بدون Administrator) اجرا کنید؛ پس از انتشار فایل نصاب در شاخهٔ `production`:
+در PowerShell معمولی (بدون Administrator) اجرا کنید؛
 
 ```powershell
 & { $p = Join-Path $env:TEMP ('gateway-install-' + [guid]::NewGuid() + '.ps1'); Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/omidgharib/codex-local-gateway/production/install.ps1' -OutFile $p; try { powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p; if ($LASTEXITCODE -ne 0) { throw 'Gateway installation failed' } } finally { Remove-Item -LiteralPath $p -Force } }
