@@ -1,5 +1,17 @@
 # Codex Local Gateway
 
+## نصب با یک دستور در ویندوز
+
+در PowerShell معمولی (بدون Administrator) اجرا کنید؛ پس از انتشار فایل نصاب در شاخهٔ `main`:
+
+```powershell
+& { $p = Join-Path $env:TEMP ('gateway-install-' + [guid]::NewGuid() + '.ps1'); Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/omidgharib/codex-local-gateway/main/install.ps1' -OutFile $p; try { powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p; if ($LASTEXITCODE -ne 0) { throw 'Gateway installation failed' } } finally { Remove-Item -LiteralPath $p -Force } }
+```
+
+ویندوز x64 و اینترنت لازم است؛ Git، Node و Codex از قبل لازم نیستند. نصاب Node و Codex را از منابع رسمی دانلود و SHA256 آن‌ها را بررسی می‌کند، توکن محلی می‌سازد، ورود رسمی به حساب را در صورت نیاز باز می‌کند و سرویس را برای شروع خودکار تنظیم می‌کند. پایان موفق نصب نیازمند کشف مدل‌ها و یک پاسخ واقعی است؛ این بررسی مقدار کمی از سهمیهٔ حساب استفاده می‌کند. ورود به حساب را خود کاربر باید تکمیل کند.
+
+اجرای دوباره، نصب و تنظیمات قبلی را حفظ و بررسی اتصال را تکرار می‌کند؛ این فرمان ابزار ارتقای نسخهٔ نصب‌شده نیست. تنظیمات در `%LOCALAPPDATA%\CodexLocalGateway\.env.local` هستند. برای پروژهٔ خودتان `CODEX_ALLOWED_ROOTS` را تنظیم کنید. راهنمای دستی زیر برای سایر سیستم‌ها و عیب‌یابی است.
+
 **نصب و راه‌اندازی:** [راهنمای مرحله‌به‌مرحله فارسی](./docs/INSTALL.fa.md) — پیش‌نیازها، نصب Codex، تنظیم توکن، اجرای سرویس، تست روی داشبورد اصلی، رفع خطا و اجرای خودکار.
 
 A localhost-only HTTP gateway that lets an authorized client run tasks through the human operator's authenticated Codex CLI session. It uses the official Codex login—not an OpenAI API key, browser cookies, or browser automation.
