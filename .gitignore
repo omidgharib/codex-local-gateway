@@ -3,7 +3,9 @@
 *.log
 node_modules/
 output/
+package-lock.json
 
 
 .env.local
 .env.*
+/setup/Setup.exe
