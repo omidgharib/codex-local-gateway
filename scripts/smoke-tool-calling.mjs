@@ -57,8 +57,24 @@ try {
   if (!second.output_text || !/23/.test(second.output_text)) {
     throw new Error(`Expected a final answer using the tool result, received: ${second.output_text}`);
   }
+  const filePath = path.win32.normalize('C:/gateway-fixture/نمونه/table.tsx');
+  const windowsTools = [
+    { type: "function", name: "read", description: "Read a file using the caller, not your runtime.", parameters: { type: "object", properties: { filePath: { type: "string" }, offset: { type: "integer" }, limit: { type: "integer" } }, required: ["filePath"], additionalProperties: false } },
+    { type: "function", name: "apply_patch", parameters: { type: "object", properties: { patchText: { type: "string" } }, required: ["patchText"], additionalProperties: false } }
+  ];
+  const windows = await request(port, headers, {
+    input: "Return exactly one caller-owned read call with filePath=" + JSON.stringify(filePath) + ". Omit offset and limit. Do not access files yourself. This is a serialization check.",
+    tools: windowsTools, tool_choice: "required", parallel_tool_calls: false,
+  });
+  const windowsCall = windows.output.find(item => item.type === "function_call");
+  const windowsArgs = JSON.parse(windowsCall?.arguments || "{}");
+  if (windowsCall?.name !== "read" || windowsArgs.filePath !== filePath || "offset" in windowsArgs || "limit" in windowsArgs) {
+    throw new Error("Windows path or optional arguments failed to round-trip");
+  }
   process.stdout.write(JSON.stringify({
     ok: true,
+    windows_path_round_trip: true,
+    optional_arguments_omitted: true,
     first_response_type: call.type,
     function_name: call.name,
     arguments: args,

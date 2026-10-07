@@ -77,15 +77,15 @@ export function toolOutputSchema(tools, toolChoice, parallelToolCalls) {
   const required = requiresCall(toolChoice);
   const callsSchema = {
     type: "array",
-    items: {
+    items: { anyOf: tools.filter(tool => callable.includes(tool.name)).map(tool => ({
       type: "object",
       properties: {
-        name: { type: "string", enum: callable },
-        arguments: { type: "string" },
+        name: { type: "string", enum: [tool.name] },
+        arguments: structuredArgumentsSchema(tool.parameters),
       },
       required: ["name", "arguments"],
       additionalProperties: false,
-    },
+    })) },
   };
   if (required) callsSchema.minItems = 1;
   if (!parallelToolCalls) callsSchema.maxItems = 1;
@@ -111,8 +111,8 @@ export function buildToolPrompt({ transcript, tools, toolChoice, parallelToolCal
     "Choose functions only when the conversation requires caller-owned external data or actions.",
     "Return exactly the object required by the output schema.",
     'For a final answer return: {"kind":"message","message":"...","calls":[]}.',
-    'For function calls return: {"kind":"function_calls","message":"","calls":[{"name":"...","arguments":"{\\"arg\\":\\"value\\"}"}]}.',
-    "Every arguments value must be a valid JSON-encoded object satisfying that function's parameters schema.",
+    'For function calls return an arguments OBJECT, not a JSON string: {"kind":"function_calls","message":"","calls":[{"name":"...","arguments":{"arg":"value"}}]}.',
+    "Every arguments value must be an object satisfying the function parameters. Use null for omitted optional fields in the output schema; the gateway removes those placeholders.",
     parallelToolCalls ? "You may return multiple independent function calls." : "Return at most one function call.",
     policy,
     finalOutputSchema ? `When returning kind=message, message must be a JSON-encoded value satisfying this final output schema:\n${JSON.stringify(finalOutputSchema)}` : "",
@@ -157,18 +157,19 @@ export function parseToolDecision(outputText, tools, toolChoice, parallelToolCal
   }
   const callable = new Set(callableToolNames(tools, toolChoice));
   const calls = value.calls.map((call, index) => {
-    if (!call || typeof call !== "object" || !callable.has(call.name) || typeof call.arguments !== "string") {
+    if (!call || typeof call !== "object" || !callable.has(call.name)) {
       throw httpError(502, `Codex returned an invalid function call at index ${index}`);
     }
     let args;
-    try { args = JSON.parse(call.arguments); } catch {
+    try { args = typeof call.arguments === "string" ? JSON.parse(call.arguments) : call.arguments; } catch {
       throw httpError(502, `Codex returned invalid JSON arguments for ${call.name}`);
     }
     if (!args || typeof args !== "object" || Array.isArray(args)) {
       throw httpError(502, `Codex arguments for ${call.name} must encode an object`);
     }
     const definition = tools.find((tool) => tool.name === call.name);
-    if (definition.strict) {
+    args = omitOptionalNulls(args, definition.parameters);
+    {
       const schemaError = validateSchemaValue(args, definition.parameters, "arguments");
       if (schemaError) throw httpError(502, `Codex returned arguments that violate the strict schema for ${call.name}: ${schemaError}`);
     }
@@ -239,6 +240,9 @@ function validateStrictSchemaDefinition(schema, path) {
 
 function validateSchemaValue(value, schema, path) {
   if (!schema || typeof schema !== "object") return null;
+  if (Array.isArray(schema.anyOf) && !schema.anyOf.some(child => !validateSchemaValue(value, child, path))) return path + " does not match anyOf";
+  if (Array.isArray(schema.oneOf) && schema.oneOf.filter(child => !validateSchemaValue(value, child, path)).length !== 1) return path + " does not match oneOf";
+  if (Array.isArray(schema.allOf)) for (const child of schema.allOf) { const error = validateSchemaValue(value, child, path); if (error) return error; }
   if (Array.isArray(schema.enum) && !schema.enum.some((candidate) => JSON.stringify(candidate) === JSON.stringify(value))) return `${path} is not in enum`;
   if (Object.hasOwn(schema, "const") && JSON.stringify(schema.const) !== JSON.stringify(value)) return `${path} does not equal const`;
   const types = Array.isArray(schema.type) ? schema.type : schema.type ? [schema.type] : [];
@@ -287,4 +291,35 @@ function matchesType(value, type) {
   if (type === "string") return typeof value === "string";
   if (type === "boolean") return typeof value === "boolean";
   return true;
+}
+
+// Codex structured output requires all declared fields. Optional fields use null
+// placeholders, removed before returning the caller's original arguments.
+function structuredArgumentsSchema(schema) {
+  if (!schema || typeof schema !== "object") return schema;
+  const result = structuredClone(schema);
+  if (result.properties) {
+    const required = new Set(result.required || []);
+    for (const [key, child] of Object.entries(result.properties)) {
+      const normalized = structuredArgumentsSchema(child);
+      result.properties[key] = required.has(key) ? normalized : { anyOf: [normalized, { type: "null" }] };
+    }
+    result.required = Object.keys(result.properties);
+    result.additionalProperties = false;
+  }
+  if (result.items) result.items = structuredArgumentsSchema(result.items);
+  for (const key of ["anyOf", "oneOf", "allOf"]) if (Array.isArray(result[key])) result[key] = result[key].map(structuredArgumentsSchema);
+  return result;
+}
+
+function omitOptionalNulls(value, schema) {
+  if (Array.isArray(value)) return value.map(item => omitOptionalNulls(item, schema?.items));
+  if (!value || typeof value !== "object") return value;
+  const result = { ...value };
+  for (const [key, child] of Object.entries(schema?.properties || {})) {
+    if (!Object.hasOwn(result, key)) continue;
+    if (result[key] === null && !(schema.required || []).includes(key) && validateSchemaValue(null, child)) delete result[key];
+    else result[key] = omitOptionalNulls(result[key], child);
+  }
+  return result;
 }

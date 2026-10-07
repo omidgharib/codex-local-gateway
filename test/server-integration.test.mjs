@@ -23,6 +23,7 @@ test("serves Responses and Chat Completions with streaming and cancellation", { 
       CODEX_BIN_ARGS: JSON.stringify([path.join(root, "fixtures", "fake-codex.mjs")]),
       CODEX_HOME: root,
       CODEX_TRACE_CONTENT: "true",
+      CODEX_MAX_PROMPT_CHARS: "200000",
     },
   });
   try {
@@ -132,6 +133,27 @@ test("serves Responses and Chat Completions with streaming and cancellation", { 
     assert.equal(trace.detail.response.object, "chat.completion");
     assert.equal(trace.detail.response.choices[0].message.content, "The weather is 25 C.");
     assert.ok(Array.isArray(trace.detail.diagnostics.events));
+
+    const api = 'http://127.0.0.1:' + port;
+    const invalidBody = await fetch(api + '/v1/responses', { method: 'POST', headers, body: 'null' });
+    assert.equal(invalidBody.status, 400);
+    await invalidBody.json();
+    const large = await fetch(api + '/v1/responses', { method: 'POST', headers, body: JSON.stringify({ input: 'x'.repeat(55_000) }) });
+    assert.equal(large.status, 200);
+    await large.json();
+    const oversized = await fetch(api + '/v1/responses', { method: 'POST', headers, body: JSON.stringify({ input: 'x'.repeat(200_001) }) });
+    assert.equal(oversized.status, 413);
+    assert.equal((await oversized.json()).error.details.max_prompt_chars, 200_000);
+    const oversizedTrace = await fetch(api + '/v1/logs/' + oversized.headers.get('x-request-id'), { headers });
+    assert.equal(oversizedTrace.status, 200);
+    assert.equal((await oversizedTrace.json()).data.http_status, 413);
+    const malformed = await fetch(api + '/v1/responses', { method: 'POST', headers, body: JSON.stringify({ input: 'MALFORMED_TOOL_RESPONSE', tools }) });
+    assert.equal(malformed.status, 502);
+    await malformed.json();
+    const malformedTrace = await fetch(api + '/v1/logs/' + malformed.headers.get('x-request-id'), { headers });
+    const failure = (await malformedTrace.json()).data;
+    assert.match(failure.detail.response.output_text, /broken/);
+    assert.ok(Array.isArray(failure.detail.diagnostics.events));
 
     const waiting = await fetch(`http://127.0.0.1:${port}/v1/responses`, { method: "POST", headers, body: JSON.stringify({ input: "WAIT_FOR_CANCEL", stream: true }) });
     const requestId = waiting.headers.get("x-request-id");

@@ -147,3 +147,24 @@ test("accepts replayed function calls and outputs and enforces strict arguments"
     tools: [{ type: "function", name: "bad", strict: true, parameters: { type: "object", properties: { x: { type: "string" } } } }],
   }, null), /additionalProperties/);
 });
+
+
+test("structured Windows path and patch arguments round-trip without nested JSON encoding", () => {
+  const tools = [{ type: "function", name: "read", parameters: { type: "object", properties: {
+    filePath: { type: "string" }, offset: { type: "integer", minimum: 0 }, note: { anyOf: [{ type: "string" }, { type: "null" }] }
+  }, required: ["filePath"], additionalProperties: false } },
+  { type: "function", name: "apply_patch", parameters: { type: "object", properties: { patchText: { type: "string" } }, required: ["patchText"], additionalProperties: false } }];
+  const request = normalizeResponseRequest({ input: "Generate tests", tools });
+  assert.equal(request.outputSchema.properties.calls.items.anyOf[0].properties.arguments.type, "object");
+  const filePath = 'C:\Users\Dotin\نمونه\table.story.tsx';
+  const patchText = '*** Begin Patch\n+const label = "نمونه";\n*** End Patch';
+  const decision = resolveToolDecision(request, JSON.stringify({ kind: "function_calls", message: "", calls: [
+    { name: "read", arguments: { filePath, offset: null, note: null } },
+    { name: "apply_patch", arguments: { patchText } }
+  ] }));
+  assert.deepEqual(JSON.parse(decision.calls[0].arguments), { filePath, note: null });
+  assert.equal(JSON.parse(decision.calls[1].arguments).patchText, patchText);
+  assert.throws(() => resolveToolDecision(request, JSON.stringify({ kind: "function_calls", message: "", calls: [
+    { name: "read", arguments: { filePath, offset: "invalid" } }
+  ] })), /schema/);
+});

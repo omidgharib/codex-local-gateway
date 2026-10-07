@@ -29,6 +29,7 @@ const server = http.createServer(async (request, response) => {
   response.setHeader("content-type", "application/json; charset=utf-8");
   response.setHeader("x-request-id", requestId);
 
+  let trace;
   try {
     if (request.method === "GET" && request.url === "/dashboard") {
       response.setHeader("content-type", "text/html; charset=utf-8");
@@ -81,10 +82,15 @@ const server = http.createServer(async (request, response) => {
     }
 
     const body = await readJson(request, 1_000_000);
+    const endpoint = apiKind === "chat" ? "/v1/chat/completions" : "/v1/responses";
+    trace = traces.create({ id: requestId, mode: body?.mode || "read-only", workspace: "unresolved", input_chars: 0,
+      endpoint, model: typeof body?.model === "string" ? body.model : "codex-default" },
+      { method: request.method, endpoint, parameters: body });
     const normalized = apiKind === "chat" ? normalizeChatRequest(body, config.model) : normalizeResponseRequest(body, config.model);
     const prompt = normalized.prompt;
+    trace.input_chars = prompt.length;
     if (prompt.length > config.maxPromptChars) {
-      throw httpError(413, `input exceeds ${config.maxPromptChars} characters`);
+      throw httpError(413, `input exceeds ${config.maxPromptChars} characters`, { code: "gateway_input_too_large", input_chars: prompt.length, max_prompt_chars: config.maxPromptChars });
     }
     if (body.mode && !["read-only", "workspace-write"].includes(body.mode)) {
       throw httpError(400, "mode must be read-only or workspace-write");
@@ -100,24 +106,11 @@ const server = http.createServer(async (request, response) => {
     if (!directoryStat?.isDirectory()) throw httpError(400, "working_directory does not exist");
     const inputImages = await validateInputImages(normalized.inputImages, config);
 
-    const endpoint = apiKind === "chat" ? "/v1/chat/completions" : "/v1/responses";
-    const trace = traces.create({
-      id: requestId,
-      mode: body.mode || "read-only",
-      workspace: path.basename(workingDirectory),
-      input_chars: prompt.length,
-      endpoint,
-      model: normalized.model || "codex-default",
-    }, {
-      method: request.method,
-      endpoint,
-      parameters: body,
-      resolved: {
-        model: normalized.model || "codex-default",
-        working_directory: workingDirectory,
-        mode: body.mode || "read-only",
-      },
-    });
+    trace.workspace = path.basename(workingDirectory);
+    trace.model = normalized.model || "codex-default";
+    if (trace.detail) trace.detail.request.resolved = {
+      model: trace.model, working_directory: workingDirectory, mode: body.mode || "read-only",
+    };
     const controller = new AbortController();
     activeRequests.set(requestId, controller);
     const abortOnDisconnect = () => {
@@ -163,7 +156,7 @@ const server = http.createServer(async (request, response) => {
       traces.markCompleted(trace, result);
     } catch (error) {
       const status = Number.isInteger(error.status) ? error.status : 500;
-      traces.markFailed(trace, status, error);
+      traces.markFailed(trace, status, error, result);
       if (streaming) {
         sendEvent(response, {
           type: "error",
@@ -221,6 +214,7 @@ const server = http.createServer(async (request, response) => {
     return json(response, 200, envelope);
   } catch (error) {
     const status = Number.isInteger(error.status) ? error.status : 500;
+    if (trace && trace.status !== "failed") traces.markFailed(trace, status, error);
     return json(response, status, {
       error: {
         message: status === 500 ? "Internal server error" : error.message,

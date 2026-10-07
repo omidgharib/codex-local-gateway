@@ -22,7 +22,7 @@ export function loadConfig(env = process.env, cwd = process.cwd()) {
     codexHome: path.resolve(env.CODEX_HOME || path.join(os.homedir(), ".codex")),
     allowedRoots,
     timeoutMs: integer(env.CODEX_TIMEOUT_MS, 300_000, 1_000, 3_600_000),
-    maxPromptChars: integer(env.CODEX_MAX_PROMPT_CHARS, 50_000, 1, 500_000),
+    maxPromptChars: integer(env.CODEX_MAX_PROMPT_CHARS, 200_000, 1, 500_000),
     concurrency: integer(env.CODEX_CONCURRENCY, 1, 1, 4),
     maxQueued: integer(env.CODEX_MAX_QUEUED, 32, 1, 1_000),
     queueTimeoutMs: integer(env.CODEX_QUEUE_TIMEOUT_MS, 60_000, 1_000, 3_600_000),

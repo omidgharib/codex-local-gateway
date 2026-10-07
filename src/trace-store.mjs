@@ -57,7 +57,11 @@ export class TraceStore {
     this.#persist();
   }
 
-  markFailed(item, statusCode, error) {
+  markFailed(item, statusCode, error, result = null) {
+    if (item.detail && result) {
+      item.detail.response = { output_text: result.outputText };
+      item.detail.diagnostics = { events: result.events, stderr: result.stderr };
+    }
     item.status = "failed";
     item.completed_at = new Date(this.now()).toISOString();
     item.execution_ms = item.started_at ? elapsed(item.started_at, item.completed_at) : 0;

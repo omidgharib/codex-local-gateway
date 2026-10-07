@@ -396,3 +396,10 @@ Pin `CODEX_VERSION` for stable deployments.
 - The catalog may be cached or bundled by Codex and does not guarantee entitlement.
 - Intermediate streaming behavior can vary by Codex CLI version.
 - Trace content may contain prompt/output secrets; keep retention short and protect the machine.
+
+
+### Large agent requests and tool diagnostics
+
+The default CODEX_MAX_PROMPT_CHARS is 200000 characters for the normalized prompt, including tool definitions and replayed history (not a model token limit). Existing deployments must update their environment override and restart. Keep callers' source excerpts and tool outputs bounded; requests above the configured limit receive HTTP 413 with the actual size and limit and appear in the trace dashboard.
+
+Codex produces structured argument objects for caller-owned tools. The gateway validates them and serializes the public API's JSON argument string itself. Omitted optional fields use null placeholders internally. Legacy JSON-string decisions remain accepted for compatibility. If decision parsing fails, raw output and diagnostics are retained only when CODEX_TRACE_CONTENT=true; they are never persisted to the metadata file.

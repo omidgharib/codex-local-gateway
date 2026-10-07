@@ -78,3 +78,16 @@ test("prunes expired entries and enforces the maximum", () => {
   now += 2_000;
   assert.deepEqual(store.list(), []);
 });
+
+
+test("failed tool parsing retains raw output only when content capture is enabled", () => {
+  for (const captureContent of [false, true]) {
+    const store = new TraceStore({ retentionMs: 60000, maxEntries: 10, captureContent });
+    const trace = store.create({ id: "failed" }, { input: "request" });
+    store.markFailed(trace, 502, new Error("invalid arguments"), { outputText: "raw invalid output", events: [], stderr: "" });
+    const saved = store.get("failed");
+    assert.equal(saved.status, "failed");
+    if (captureContent) assert.equal(saved.detail.response.output_text, "raw invalid output");
+    else assert.equal(saved.detail, undefined);
+  }
+});

@@ -53,10 +53,12 @@ for await (const chunk of process.stdin) prompt += chunk;
 if (prompt.includes("WAIT_FOR_CANCEL")) await new Promise(() => {});
 
 let outputText;
-if (prompt.includes("caller-owned function-calling protocol")) {
+if (prompt.includes("MALFORMED_TOOL_RESPONSE")) {
+  outputText = JSON.stringify({ kind: "function_calls", message: "", calls: [{ name: "get_weather", arguments: "{broken" }] });
+} else if (prompt.includes("caller-owned function-calling protocol")) {
   outputText = prompt.includes("function_call_output")
     ? JSON.stringify({ kind: "message", message: "The weather is 25 C.", calls: [] })
-    : JSON.stringify({ kind: "function_calls", message: "", calls: [{ name: "get_weather", arguments: JSON.stringify({ city: "Tehran" }) }] });
+    : JSON.stringify({ kind: "function_calls", message: "", calls: [{ name: "get_weather", arguments: { city: "Tehran" } }] });
 } else {
   outputText = prompt.includes("CHAT_TEST") ? "CHAT_OK" : "RESPONSE_OK";
 }
