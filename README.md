@@ -2,10 +2,10 @@
 
 ## نصب با یک دستور در ویندوز
 
-در PowerShell معمولی (بدون Administrator) اجرا کنید؛ پس از انتشار فایل نصاب در شاخهٔ `main`:
+در PowerShell معمولی (بدون Administrator) اجرا کنید؛ پس از انتشار فایل نصاب در شاخهٔ `production`:
 
 ```powershell
-& { $p = Join-Path $env:TEMP ('gateway-install-' + [guid]::NewGuid() + '.ps1'); Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/omidgharib/codex-local-gateway/main/install.ps1' -OutFile $p; try { powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p; if ($LASTEXITCODE -ne 0) { throw 'Gateway installation failed' } } finally { Remove-Item -LiteralPath $p -Force } }
+& { $p = Join-Path $env:TEMP ('gateway-install-' + [guid]::NewGuid() + '.ps1'); Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/omidgharib/codex-local-gateway/production/install.ps1' -OutFile $p; try { powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p; if ($LASTEXITCODE -ne 0) { throw 'Gateway installation failed' } } finally { Remove-Item -LiteralPath $p -Force } }
 ```
 
 ویندوز x64 و اینترنت لازم است؛ Git، Node و Codex از قبل لازم نیستند. نصاب Node و Codex را از منابع رسمی دانلود و SHA256 آن‌ها را بررسی می‌کند، توکن محلی می‌سازد، ورود رسمی به حساب را در صورت نیاز باز می‌کند و سرویس را برای شروع خودکار تنظیم می‌کند. پایان موفق نصب نیازمند کشف مدل‌ها و یک پاسخ واقعی است؛ این بررسی مقدار کمی از سهمیهٔ حساب استفاده می‌کند. ورود به حساب را خود کاربر باید تکمیل کند.
@@ -403,3 +403,14 @@ Pin `CODEX_VERSION` for stable deployments.
 The default CODEX_MAX_PROMPT_CHARS is 200000 characters for the normalized prompt, including tool definitions and replayed history (not a model token limit). Existing deployments must update their environment override and restart. Keep callers' source excerpts and tool outputs bounded; requests above the configured limit receive HTTP 413 with the actual size and limit and appear in the trace dashboard.
 
 Codex produces structured argument objects for caller-owned tools. The gateway validates them and serializes the public API's JSON argument string itself. Omitted optional fields use null placeholders internally. Legacy JSON-string decisions remain accepted for compatibility. If decision parsing fails, raw output and diagnostics are retained only when CODEX_TRACE_CONTENT=true; they are never persisted to the metadata file.
+## جریان توسعه و انتشار
+
+مسیر تغییرات: `develop → sandbox → production`.
+
+- `develop`: شاخهٔ پیش‌فرض مخزن و مقصد تغییرات توسعه؛ برنچ‌های کاری از این شاخه ساخته و با Pull Request به آن ادغام می‌شوند.
+- `sandbox`: نسخهٔ آمادهٔ آزمایش؛ تغییرات با Pull Request از `develop` به این شاخه ارتقا پیدا می‌کنند.
+- `production`: نسخهٔ پایدار قابل نصب؛ پس از تأیید آزمایش‌ها، Pull Request از `sandbox` به این شاخه ادغام می‌شود.
+
+پیش از هر ارتقا، `npm test` باید موفق باشد. در sandbox نصب و اجرای واقعی gateway نیز بررسی شود. ادغام خودکار به production فعال نیست؛ انتشار پس از تأیید انجام می‌شود. نصاب به‌صورت پیش‌فرض از `production` دریافت می‌کند؛ برای آزمایش می‌توان `-Ref sandbox` را به نصاب داد.
+
+شاخهٔ پیش‌فرض مخزن `develop` است و شاخهٔ `main` از GitHub حذف شده است. تغییرات فقط از مسیر بالا به انتشار می‌رسند.
